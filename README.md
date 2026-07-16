@@ -54,8 +54,17 @@ graph TD
     G -->|Sub-10ms Lookups| H[FastAPI Serving Layer]
     H -->|Feature Vector| I(Mock ML Scorer)
     
-    classDef storage fill:#dbeafe,stroke:#333,stroke-width:2px;
-    class D,E,F,G storage;
+    classDef ingestion fill:#E1F5FE,stroke:#333,stroke-width:2px,color:#333;
+    classDef compute fill:#FFF3E0,stroke:#333,stroke-width:2px,color:#333;
+    classDef storage fill:#F5F5F5,stroke:#333,stroke-width:2px,color:#333;
+    classDef serving fill:#EDE7F6,stroke:#333,stroke-width:2px,color:#333;
+    classDef messaging fill:#E8F5E9,stroke:#333,stroke-width:2px,color:#333;
+    
+    class A ingestion;
+    class C compute;
+    class D,E,F storage;
+    class G,H,I serving;
+    class B,DLQ messaging;
 ```
 
 ---
