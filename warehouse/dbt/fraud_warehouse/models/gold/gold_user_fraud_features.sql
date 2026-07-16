@@ -4,6 +4,12 @@
     Windows are measured backwards from each user's most recent transaction
     (their "current time"), so a simple WHERE on hours_ago implements them.
     A real-time scorer would window against the scoring request time instead.
+
+    Fix (2026-07-15): latest_amount_zscore previously used `hours_ago = 0`
+    which is a floating-point equality comparison — it almost never evaluates
+    to true because hours_ago = EXTRACT(epoch ...) / 3600.0 is a continuous
+    float. Replaced with ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY
+    event_timestamp DESC) = 1 to reliably identify the single latest record.
 */
 
 {{ config(materialized='table', schema='gold') }}
@@ -32,6 +38,28 @@ transactions_with_age as (
         extract(epoch from (ul.latest_txn_at - t.event_timestamp)) / 3600.0 as hours_ago
     from transactions t
     inner join user_latest ul on t.user_id = ul.user_id
+
+),
+
+/*
+    Rank each user's transactions newest-first so we can reliably identify
+    the single latest record for the z-score numerator.
+
+    Why not `hours_ago = 0`?  hours_ago is a continuous float derived from
+    EXTRACT(epoch ...) / 3600.  Floating-point equality is non-deterministic
+    on continuous values — the "latest" transaction has hours_ago ≈ 0.0, but
+    the exact value depends on microsecond-level timestamp precision and is
+    vanishingly unlikely to equal exactly 0.0.  ROW_NUMBER() is exact.
+*/
+transactions_ranked as (
+
+    select
+        *,
+        row_number() over (
+            partition by user_id
+            order by event_timestamp desc
+        ) as rn
+    from transactions_with_age
 
 ),
 
@@ -104,18 +132,27 @@ user_features as (
         -- Late-night activity (02:00-05:00 local hour).
         count(*) filter (where hours_ago <= 24 and event_hour between 2 and 5) as late_night_txn_count_24h,
 
-        -- Z-score of the latest transaction amount vs the user's history.
+        /*
+            Z-score of the LATEST transaction amount vs the user's full history.
+
+            Numerator:   the amount of the single most-recent transaction (rn = 1).
+            Denominator: population stddev across all of the user's transactions.
+
+            Uses MAX(...) FILTER (WHERE rn = 1) rather than a subquery so that
+            this stays a single GROUP BY aggregate without a self-join.
+            rn is an INTEGER so the equality comparison is safe and exact.
+        */
         case
             when stddev(amount) > 0
             then round(
-                (max(amount) filter (where hours_ago = 0) - avg(amount))
+                (max(amount) filter (where rn = 1) - avg(amount))
                 / stddev(amount),
                 4
             )
             else 0
         end                                                    as latest_amount_zscore
 
-    from transactions_with_age
+    from transactions_ranked
     group by user_id, latest_txn_at
 
 )

@@ -3,7 +3,18 @@ Mock ML Scoring Service.
 
 Simulates the real-time decision engine (the "Bouncer") that sits in front of the
 Feature Store API. It intercepts a dummy transaction, queries the API for the
-user's historical features, and runs a mock ML heuristic to ALLOW or BLOCK the transaction.
+user's historical features, and runs a mock ML heuristic to ALLOW or BLOCK
+the transaction.
+
+12-Factor III compliance: All config sourced from config.settings.
+    API URL, API key, and Postgres credentials are injected — not hardcoded.
+12-Factor XI compliance: Structured JSON logs via config.logging_config.
+    All print() calls replaced with logger.info() / logger.warning() so output
+    is captured by Docker logging, Cloud Logging, and Datadog.
+
+Usage:
+    make score                    → random user from gold table
+    make score USER_ID=user_abc   → specific user
 """
 
 import argparse
@@ -14,20 +25,32 @@ import time
 import psycopg2
 import requests
 
-API_URL = "http://localhost:8002/v1/features/user/{}"
-API_KEY = "sk_test_123"
+from config.logging_config import configure_logging
+from config.settings import settings
+
+logger = configure_logging("ml_scorer")
 
 
-def get_random_user_from_db():
-    """Simulate getting a user ID from an active checkout session."""
-    print("INFO: Connecting to DB to find an active user...")
+def get_random_user_from_db() -> str:
+    """
+    Simulate getting a user ID from an active checkout session.
+
+    Connects using AppSettings — identical to every other service in the pipeline.
+    In production this would be replaced by reading the user_id from the
+    inference request payload (e.g., a Kafka event or REST call from the
+    checkout service).
+    """
+    logger.info(
+        "Querying gold table for a random active user",
+        extra={"pg_host": settings.pg_host, "pg_port": settings.pg_port},
+    )
     try:
         conn = psycopg2.connect(
-            host="localhost",
-            port=5434,
-            database="fraud_reference",
-            user="fraud_admin",
-            password="changeme_local_only",
+            host=settings.pg_host,
+            port=settings.pg_port,
+            database=settings.pg_database,
+            user=settings.pg_user,
+            password=settings.pg_password,
         )
         cur = conn.cursor()
         cur.execute(
@@ -38,104 +61,161 @@ def get_random_user_from_db():
 
         if res:
             return res[0]
-        else:
-            print("ERROR: No users found. Run `make demo` first.")
-            sys.exit(1)
-    except Exception as e:
-        print(f"ERROR: Failed to connect to Postgres: {e}")
-        print("Ensure docker containers are running.")
+        logger.error("No users found in gold table. Run `make demo` first.")
+        sys.exit(1)
+
+    except psycopg2.OperationalError:
+        logger.exception(
+            "Failed to connect to Postgres. Ensure the cluster is running.",
+            extra={"pg_host": settings.pg_host, "pg_port": settings.pg_port},
+        )
         sys.exit(1)
 
 
-def score_transaction(user_id: str):
-    print(f"\nINFO: User {user_id} is attempting a purchase.")
-    print("INFO: Pinging Feature Store API for user history...")
+def score_transaction(user_id: str) -> dict:
+    """
+    Fetch features from the Feature Store API and run a mock heuristic scorer.
 
-    headers = {"X-API-Key": API_KEY}
+    Returns:
+        dict with keys: user_id, risk_score, action, reasons, latency_ms
+    """
+    logger.info("Scoring transaction", extra={"user_id": user_id})
 
-    # 1. Fetch Features
+    api_url = f"http://{settings.api_host}:{settings.api_port}/v1/features/user/{user_id}"
+    headers = {"X-API-Key": settings.api_key}
+
+    # ── 1. Fetch Features ─────────────────────────────────────────────────────
     start_time = time.perf_counter()
     try:
-        response = requests.get(API_URL.format(user_id), headers=headers, timeout=2.0)
+        response = requests.get(api_url, headers=headers, timeout=2.0)
     except requests.exceptions.ConnectionError:
-        print("ERROR: Failed to connect to API.")
+        logger.error(
+            "Failed to connect to Feature Store API",
+            extra={"api_url": api_url},
+        )
         sys.exit(1)
 
-    network_latency_ms = (time.perf_counter() - start_time) * 1000
+    latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
+    server_process_time = response.headers.get("X-Process-Time-Ms", "unknown")
+    request_id = response.headers.get("X-Request-ID", "unknown")
+
+    if response.status_code == 403:
+        logger.error(
+            "API returned 403 — check API_KEY in .env.local matches the running API",
+            extra={"status_code": 403, "request_id": request_id},
+        )
+        sys.exit(1)
 
     if response.status_code != 200:
-        print(f"ERROR: API returned {response.status_code}")
+        logger.error(
+            "API returned non-200 status",
+            extra={"status_code": response.status_code, "request_id": request_id},
+        )
         sys.exit(1)
 
-    # 2. Extract Data
-    data = response.json()
-    server_process_time = response.headers.get("X-Process-Time-Ms", "Unknown")
-    features = data["features"]
+    features = response.json()["features"]
 
-    print("INFO: Features retrieved successfully.")
-    print(f"INFO: API Processing Time: {server_process_time} ms")
-    print(f"INFO: Total Latency: {network_latency_ms:.2f} ms\n")
+    logger.info(
+        "Features retrieved",
+        extra={
+            "user_id": user_id,
+            "server_process_time_ms": server_process_time,
+            "total_latency_ms": latency_ms,
+            "request_id": request_id,
+        },
+    )
 
-    # 3. Mock ML Decision Engine
-    print("--- ML SCORING START ---")
-
-    # Extract specific features the model cares about
+    # ── 2. Extract Model Inputs ───────────────────────────────────────────────
     txn_count_24h = features.get("txn_count_24h", 0)
     failure_rate_24h = features.get("failure_rate_24h", 0.0)
     unique_cities_24h = features.get("unique_cities_24h", 1)
-    late_night_txn_count = features.get("late_night_txn_count_24h", 0)
+    late_night_count = features.get("late_night_txn_count_24h", 0)
     zscore = features.get("latest_amount_zscore", 0.0)
 
-    print("Extracted features:")
-    print(f" - Transactions (24h): {txn_count_24h}")
-    print(f" - Failure Rate (24h): {failure_rate_24h}")
-    print(f" - Unique Cities (24h): {unique_cities_24h}")
-    print(f" - Late Night Swipes: {late_night_txn_count}")
-    print(f" - Amount Z-Score: {zscore}\n")
+    logger.info(
+        "Feature vector extracted",
+        extra={
+            "user_id": user_id,
+            "txn_count_24h": txn_count_24h,
+            "failure_rate_24h": failure_rate_24h,
+            "unique_cities_24h": unique_cities_24h,
+            "late_night_txn_count_24h": late_night_count,
+            "latest_amount_zscore": zscore,
+        },
+    )
 
-    # Calculate Risk Score (0-100)
+    # ── 3. Mock Risk Scoring ──────────────────────────────────────────────────
+    # A production model would call a serialised scikit-learn / XGBoost model
+    # here. This heuristic mirrors the feature weights a gradient-boosted tree
+    # would learn from labelled fraud data.
     risk_score = 0
-    reasons = []
+    reasons: list[str] = []
 
     if txn_count_24h > 15:
         risk_score += 30
-        reasons.append("High velocity (card testing).")
+        reasons.append("high_velocity_24h")
     if failure_rate_24h > 0.4:
         risk_score += 40
-        reasons.append("Extreme failure rate.")
+        reasons.append("extreme_failure_rate_24h")
     if unique_cities_24h > 2:
         risk_score += 30
-        reasons.append("Impossible travel speed (swiped in multiple cities).")
-    if late_night_txn_count > 2:
+        reasons.append("impossible_travel_speed")
+    if late_night_count > 2:
         risk_score += 20
-        reasons.append("Suspicious late night activity.")
-    if zscore > 3.0:
+        reasons.append("suspicious_late_night_activity")
+    if float(zscore) > 3.0:
         risk_score += 25
-        reasons.append("Purchase amount deviates severely from user norm.")
+        reasons.append("amount_zscore_anomaly")
 
-    # Add random baseline noise (0-15) to simulate typical ML score variance
+    # Baseline noise simulates typical ML score variance (0-15 points).
     risk_score += random.randint(0, 15)
     risk_score = min(risk_score, 100)
 
-    print(f"Calculated Risk Score: {risk_score}/100")
+    action = "BLOCKED" if risk_score > 75 else "APPROVED"
 
-    # 4. Enforce Policy
-    if risk_score > 75:
-        print("ACTION: BLOCKED")
-        print("Reasons:")
-        for r in reasons:
-            print(f" - {r}")
-    else:
-        print("ACTION: APPROVED")
-        print("Transaction allowed.")
+    logger.warning(
+        "Scoring decision",
+        extra={
+            "user_id": user_id,
+            "risk_score": risk_score,
+            "action": action,
+            "reasons": reasons,
+            "latency_ms": latency_ms,
+        },
+    ) if action == "BLOCKED" else logger.info(
+        "Scoring decision",
+        extra={
+            "user_id": user_id,
+            "risk_score": risk_score,
+            "action": action,
+            "reasons": reasons,
+            "latency_ms": latency_ms,
+        },
+    )
 
-    print("\n------------------------------------------------")
+    return {
+        "user_id": user_id,
+        "risk_score": risk_score,
+        "action": action,
+        "reasons": reasons,
+        "latency_ms": latency_ms,
+    }
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--user_id", type=str, help="Specific user_id to test")
+    parser = argparse.ArgumentParser(description="Mock ML transaction scorer")
+    parser.add_argument("--user_id", type=str, help="Specific user_id to score")
     args = parser.parse_args()
 
     user = args.user_id if args.user_id else get_random_user_from_db()
-    score_transaction(user)
+    result = score_transaction(user)
+
+    # Human-readable summary for the terminal (all detail is in the JSON logs above).
+    print("\n" + "─" * 52)
+    print(f"  User:        {result['user_id']}")
+    print(f"  Risk Score:  {result['risk_score']}/100")
+    print(f"  Action:      {result['action']}")
+    if result["reasons"]:
+        print(f"  Signals:     {', '.join(result['reasons'])}")
+    print(f"  Latency:     {result['latency_ms']} ms")
+    print("─" * 52 + "\n")

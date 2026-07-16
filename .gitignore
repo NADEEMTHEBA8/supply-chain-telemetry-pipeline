@@ -2,8 +2,6 @@ __pycache__/
 *.pyc
 .venv/
 venv/
-.env
-*.local
 .DS_Store
 .idea/
 .vscode/
@@ -48,7 +46,11 @@ airflow.db
 standalone_admin_password.txt
 
 # Environment vars / secrets
-.env.*
+# .env.local is the secrets file — gitignored.
+# .env.local.example is the template — committed, safe to share.
+.env
+.env.local
+!.env.local.example
 secret*
 *.pem
 interview*.md

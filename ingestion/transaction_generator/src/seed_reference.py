@@ -12,12 +12,12 @@ Run once after the Postgres container is up:
 
 from __future__ import annotations
 
-import os
 import random
 
 import psycopg2
 from psycopg2.extras import execute_values
 
+from config.settings import settings
 from ingestion.transaction_generator.src.profiles import ProfileFactory
 
 # Shared with run.py — the generator regenerates the identical profile set
@@ -28,12 +28,13 @@ SEED = 42
 
 
 def _connect():
+    """Connect to Postgres using AppSettings (12-Factor III compliant)."""
     return psycopg2.connect(
-        host=os.getenv("PG_HOST", "127.0.0.1"),
-        port=int(os.getenv("PG_PORT", "5434")),
-        dbname=os.getenv("PG_DATABASE", "fraud_reference"),
-        user=os.getenv("PG_USER", "fraud_admin"),
-        password=os.getenv("PG_PASSWORD", "changeme_local_only"),
+        host=settings.pg_host,
+        port=settings.pg_port,
+        dbname=settings.pg_database,
+        user=settings.pg_user,
+        password=settings.pg_password,
     )
 
 

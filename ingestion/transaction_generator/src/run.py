@@ -1,6 +1,10 @@
 """
 Transaction generator runner.
+
 Publishes synthetic transaction events to Kafka.
+
+12-Factor III compliance: Kafka bootstrap address is injected from
+AppSettings (sourced from .env.local). No hardcoded addresses.
 """
 
 from __future__ import annotations
@@ -8,6 +12,7 @@ from __future__ import annotations
 import argparse
 import time
 
+from config.settings import settings
 from ingestion.transaction_generator.src.generator import TransactionGenerator
 from ingestion.transaction_generator.src.kafka_producer import TransactionKafkaProducer
 from ingestion.transaction_generator.src.profiles import ProfileFactory
@@ -17,8 +22,6 @@ from ingestion.transaction_generator.src.seed_reference import (
     SEED,
 )
 
-KAFKA_BOOTSTRAP = "localhost:9092"
-KAFKA_TOPIC = "transactions.raw"
 PRINT_EVERY = 50
 
 
@@ -40,14 +43,14 @@ def main() -> None:
 
     gen = TransactionGenerator(users=users, merchants=merchants, seed=SEED)
     producer = TransactionKafkaProducer(
-        bootstrap_servers=KAFKA_BOOTSTRAP,
-        topic=KAFKA_TOPIC,
+        bootstrap_servers=settings.kafka_bootstrap_servers,
+        topic=settings.kafka_topic_raw,
     )
 
     if args.firehose:
-        print(f"Publishing to {KAFKA_TOPIC} in FIREHOSE mode (Ctrl+C to stop)")
+        print(f"Publishing to {settings.kafka_topic_raw} in FIREHOSE mode (Ctrl+C to stop)")
     else:
-        print(f"Publishing to {KAFKA_TOPIC} at ~{args.rate}/s (Ctrl+C to stop)")
+        print(f"Publishing to {settings.kafka_topic_raw} at ~{args.rate}/s (Ctrl+C to stop)")
 
     delay = 1.0 / args.rate if args.rate > 0 else 0
     total_sent = 0

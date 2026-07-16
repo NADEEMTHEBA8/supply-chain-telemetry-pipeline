@@ -4,12 +4,12 @@ Bronze ingestion: Kafka transactions.raw to Delta Lake.
 
 import argparse
 import logging
-import os
 
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.functions import col, current_timestamp, from_json, hour, sha2, to_date
 from pyspark.sql.types import StringType, StructField, StructType, TimestampType
 
+from config.settings import settings
 from streaming.spark.src.config import create_spark_session
 
 logging.basicConfig(
@@ -149,11 +149,11 @@ def run() -> None:
     parser.add_argument("--once", action="store_true", help="Process all available data then stop")
     args = parser.parse_args()
 
-    bootstrap = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
-    topic = "transactions.raw"
-    bronze_output = "s3a://bronze/transactions_v2/"
-    bronze_checkpoint = "s3a://bronze/_checkpoints/bronze_ingest_v2/"
-    dead_letter_checkpoint = "s3a://bronze/_checkpoints/dead_letter/"
+    bootstrap = settings.kafka_bootstrap_servers
+    topic = settings.kafka_topic_raw
+    bronze_output = settings.bronze_output_path
+    bronze_checkpoint = settings.bronze_checkpoint_path
+    dead_letter_checkpoint = settings.dead_letter_checkpoint_path
 
     spark = create_spark_session(app_name="bronze-ingest")
     try:
@@ -162,16 +162,33 @@ def run() -> None:
         parsed_txns = mask_pii(parsed_txns)
         parsed_txns = add_partition_columns(parsed_txns)
 
-        write_bronze_to_minio(parsed_txns, bronze_checkpoint, bronze_output, once=args.once)
-        write_dead_letters(malformed_txns, dead_letter_checkpoint, bootstrap, once=args.once)
+        # Capture StreamingQuery references at start time.
+        #
+        # DO NOT use `spark.streams.active` for --once termination.
+        # That registry is read at an arbitrary point after start() returns —
+        # if the first query completes before the second is registered, the
+        # loop exits early and the dead-letter stream is left orphaned.
+        # Holding explicit references guarantees both queries are awaited.
+        bronze_query = write_bronze_to_minio(
+            parsed_txns, bronze_checkpoint, bronze_output, once=args.once
+        )
+        dead_letter_query = write_dead_letters(
+            malformed_txns, dead_letter_checkpoint, bootstrap, once=args.once
+        )
 
-        logger.info("Streams started.")
+        logger.info(
+            "Streams started. bronze_query_id=%s dead_letter_query_id=%s",
+            bronze_query.id,
+            dead_letter_query.id,
+        )
 
         if args.once:
-            for q in spark.streams.active:
-                q.awaitTermination()
+            # Await both queries via their captured references — not the live registry.
+            for query in (bronze_query, dead_letter_query):
+                query.awaitTermination()
+            logger.info("availableNow trigger complete — all backlog processed.")
         else:
-            logger.info("Press Ctrl+C to stop.")
+            logger.info("Continuous mode. Press Ctrl+C to stop.")
             spark.streams.awaitAnyTermination()
 
     except KeyboardInterrupt:

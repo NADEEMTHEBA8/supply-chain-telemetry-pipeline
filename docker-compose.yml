@@ -1,10 +1,60 @@
+# ─── Realtime Fraud Feature Store — Docker Compose ───────────────────────────
+#
+# Architecture: Enterprise Digital Twin
+# Network:      fraud_vpc (172.28.0.0/16) — isolated bridge, mirrors a GCP VPC
+#               Private Subnet or AWS VPC with private subnets.
+#
+# Dev/Prod Parity mapping (see DEV_PROD_PARITY.md for full details):
+#   kafka         → Confluent Cloud / Amazon MSK
+#   kafka-connect → Datastream / AWS DMS (Debezium CDC)
+#   spark-master  → Dataproc master / EMR master
+#   spark-worker  → Dataproc workers / EMR core nodes
+#   minio         → Google Cloud Storage / Amazon S3
+#   postgres      → Cloud SQL / AlloyDB / Amazon RDS
+#   redis         → Cloud Memorystore / ElastiCache
+#   airflow       → Cloud Composer 2 / MWAA
+#
+# Config:   All secrets and addresses injected from .env.local
+#           Swap .env.local → .env.gcp to promote to production.
+#           See .env.local.example for the full variable manifest.
+#
+# Usage:
+#   cp .env.local.example .env.local
+#   make cluster-up
+# ─────────────────────────────────────────────────────────────────────────────
+
 name: fraud-pipeline
 
+# ── Network — fraud_vpc ───────────────────────────────────────────────────────
+# A named bridge network with an explicit subnet models a cloud VPC.
+# Services communicate via Docker DNS (e.g., kafka:29092, postgres:5432).
+# Host access is only through explicitly mapped ports.
+networks:
+  fraud_vpc:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+# ── Volumes ───────────────────────────────────────────────────────────────────
+volumes:
+  kafka_data:
+  postgres_data:
+  redis_data:
+  minio_data:
+
 services:
+
+  # ── Kafka (KRaft mode — no Zookeeper) ─────────────────────────────────────
+  # GCP equivalent: Confluent Cloud / Cloud Pub/Sub
+  # AWS equivalent: Amazon MSK
+  # Parity: Identical Kafka Producer/Consumer API. Bootstrap address injected.
   kafka:
     image: confluentinc/cp-kafka:7.6.0
     hostname: kafka
     container_name: kafka
+    networks:
+      - fraud_vpc
     ports:
       - "9092:9092"
       - "9093:9093"
@@ -31,30 +81,38 @@ services:
       timeout: 10s
       retries: 5
 
+  # ── Kafka UI (dev observability only — not deployed to production) ──────────
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: kafka-ui
+    networks:
+      - fraud_vpc
     depends_on:
       kafka:
         condition: service_healthy
     ports:
       - "8080:8080"
     environment:
-      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_NAME: fraud-local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
       KAFKA_CLUSTERS_0_KAFKACONNECT_0_NAME: debezium
       KAFKA_CLUSTERS_0_KAFKACONNECT_0_ADDRESS: http://kafka-connect:8083
 
+  # ── PostgreSQL — OLTP / CDC source ───────────────────────────────────────
+  # GCP equivalent: Cloud SQL for PostgreSQL / AlloyDB
+  # AWS equivalent: Amazon RDS for PostgreSQL
+  # wal_level=logical + replication slots are required for Debezium CDC.
   postgres:
     image: postgres:16-alpine
     container_name: postgres
+    networks:
+      - fraud_vpc
     ports:
       - "5434:5432"
     environment:
       POSTGRES_USER: fraud_admin
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_local_only}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: fraud_reference
-    # wal_level=logical + replication slots are required for Debezium CDC.
     command:
       - "postgres"
       - "-c"
@@ -73,9 +131,15 @@ services:
       timeout: 5s
       retries: 5
 
+  # ── Redis — Feature Store Cache ───────────────────────────────────────────
+  # GCP equivalent: Memorystore for Redis
+  # AWS equivalent: ElastiCache (Redis)
+  # Parity: Standard redis-py client. Host/port injected via REDIS_HOST/REDIS_PORT.
   redis:
     image: redis:7.2-alpine
     container_name: redis
+    networks:
+      - fraud_vpc
     ports:
       - "6379:6379"
     command: redis-server --appendonly yes
@@ -87,15 +151,22 @@ services:
       timeout: 5s
       retries: 5
 
+  # ── MinIO — Object Storage (S3-compatible) ────────────────────────────────
+  # GCP equivalent: Google Cloud Storage (S3A protocol via GCS HMAC keys)
+  # AWS equivalent: Amazon S3
+  # Parity: Spark jobs write to s3a://bronze/... — identical path in prod.
+  #         Only MINIO_ENDPOINT changes between environments.
   minio:
     image: minio/minio:latest
     container_name: minio
+    networks:
+      - fraud_vpc
     ports:
       - "9000:9000"
       - "9001:9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
     command: server /data --console-address ":9001"
     volumes:
       - minio_data:/data
@@ -106,27 +177,35 @@ services:
       retries: 5
 
   # One-shot: creates the `bronze` bucket the Spark job writes to, then exits.
-  # S3A does not create buckets on write, so this has to exist up front.
+  # S3A does not create buckets on write, so this must exist up front.
+  # In GCS/S3, this is handled by Terraform / gsutil / aws s3api create-bucket.
   minio-init:
     image: minio/mc:latest
     container_name: minio-init
+    networks:
+      - fraud_vpc
     depends_on:
       minio:
         condition: service_healthy
     entrypoint: >
       /bin/sh -c "
-      mc alias set local http://minio:9000
-      \"$${MINIO_ROOT_USER:-minioadmin}\" \"$${MINIO_ROOT_PASSWORD:-minioadmin}\";
-      mc mb --ignore-existing local/bronze;
+      mc alias set ${MINIO_ALIAS:-fraud-local} http://minio:9000
+        \"$${MINIO_ACCESS_KEY}\" \"$${MINIO_SECRET_KEY}\";
+      mc mb --ignore-existing ${MINIO_ALIAS:-fraud-local}/bronze;
       echo 'bronze bucket ready';
       "
     restart: "no"
 
-  # Debezium (Kafka Connect). The Postgres source connector is registered
-  # separately via infra/debezium/register-connector.sh (make connector).
+  # ── Debezium (Kafka Connect) — CDC source connector ────────────────────────
+  # GCP equivalent: Datastream / Debezium on GCE
+  # AWS equivalent: AWS DMS / Debezium on EC2
+  # The Postgres source connector is registered separately via:
+  #   make connector  (calls infra/debezium/register-connector.sh)
   kafka-connect:
     image: debezium/connect:2.5
     container_name: kafka-connect
+    networks:
+      - fraud_vpc
     depends_on:
       kafka:
         condition: service_healthy
@@ -154,37 +233,119 @@ services:
       retries: 10
       start_period: 30s
 
-  # Airflow in standalone mode (webserver + scheduler, SequentialExecutor).
-  # Runs the batch DAG: dbt snapshot -> run -> test -> feature load.
+  # ── Spark Master ───────────────────────────────────────────────────────────
+  # GCP equivalent: Dataproc cluster master node
+  # AWS equivalent: EMR master node
+  # Parity: Spark submit target = spark://spark-master:7077 (local)
+  #         = spark://dataproc-m:7077 or yarn (cloud)
+  #         settings.spark_master_url injects the correct URL per environment.
+  spark-master:
+    image: bitnamilegacy/spark:3.5.1
+    container_name: spark-master
+    hostname: spark-master
+    networks:
+      - fraud_vpc
+    environment:
+      - SPARK_MODE=master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+      - SPARK_MASTER_WEBUI_PORT=8088
+    ports:
+      # Spark Master WebUI — view running jobs and cluster health
+      - "8088:8088"
+      # Spark Master RPC — executors and spark-submit connect here
+      - "7077:7077"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/8088'"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  # ── Spark Worker ───────────────────────────────────────────────────────────
+  # GCP equivalent: Dataproc worker nodes (scale horizontally)
+  # AWS equivalent: EMR core nodes
+  # Scale: docker compose up --scale spark-worker=3 to simulate a 3-node cluster.
+  spark-worker:
+    image: bitnamilegacy/spark:3.5.1
+    container_name: spark-worker
+    hostname: spark-worker
+    networks:
+      - fraud_vpc
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_CORES=2
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+      - SPARK_WORKER_WEBUI_PORT=8081
+    ports:
+      # Spark Worker WebUI — view executor memory, task execution
+      - "8081:8081"
+    depends_on:
+      spark-master:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/8081'"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  # ── Apache Airflow — Batch Orchestration ──────────────────────────────────
+  # GCP equivalent: Cloud Composer 2
+  # AWS equivalent: Amazon MWAA
+  # Executor: LocalExecutor mirrors Composer 2's CeleryExecutor at small scale.
+  #           Upgrade to CeleryExecutor for true horizontal task parallelism.
+  # Image: Custom Dockerfile.airflow bakes all deps at build time (12-Factor V).
   airflow:
-    image: apache/airflow:2.9.0-python3.11
+    build:
+      context: .
+      dockerfile: infra/airflow/Dockerfile.airflow
+    image: fraud-airflow:local
     container_name: airflow
+    networks:
+      - fraud_vpc
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
     ports:
-      - "8081:8080"
+      - "8082:8080"
     environment:
+      # Executor — LocalExecutor supports concurrent task execution.
+      # Upgrade to CeleryExecutor for production horizontal scaling.
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
-      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
-      _PIP_ADDITIONAL_REQUIREMENTS: >-
-        dbt-postgres==1.8.2
-        redis
-        psycopg2-binary
+      # Airflow metadata DB — uses the same Postgres instance as the warehouse.
+      # In production, this should be a separate Cloud SQL instance.
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://fraud_admin:${POSTGRES_PASSWORD}@postgres:5432/fraud_reference
+      # Downstream pipeline config — injected, not hardcoded.
       PG_HOST: postgres
       PG_PORT: "5432"
       PG_DATABASE: fraud_reference
       PG_USER: fraud_admin
-      PG_PASSWORD: changeme_local_only
+      PG_PASSWORD: ${POSTGRES_PASSWORD}
       REDIS_HOST: redis
       REDIS_PORT: "6379"
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      SPARK_MASTER_URL: spark://spark-master:7077
+      API_KEY: ${API_KEY}
     volumes:
       - ./orchestration/airflow/dags:/opt/airflow/dags
       - ./warehouse/dbt/fraud_warehouse:/opt/airflow/dbt
       - ./feature_store:/opt/airflow/feature_store
+      - ./config:/opt/airflow/config
     command: airflow standalone
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
@@ -192,9 +353,3 @@ services:
       timeout: 10s
       retries: 10
       start_period: 60s
-
-volumes:
-  kafka_data:
-  postgres_data:
-  redis_data:
-  minio_data:

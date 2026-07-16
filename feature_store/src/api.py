@@ -3,12 +3,15 @@ Fraud Feature Serving API.
 
 Exposes precomputed fraud features from Redis over HTTP.
 Includes basic latency monitoring and API versioning.
+
+12-Factor III compliance: All configuration sourced from config.settings.
+12-Factor XI compliance: Structured JSON logs via config.logging_config.
+No hardcoded secrets, host addresses, or port numbers appear in this module.
 """
 
 import json
-import logging
-import os
 import time
+import uuid
 from collections.abc import Generator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -19,18 +22,16 @@ from fastapi.responses import JSONResponse
 from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel, Field
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
-logger = logging.getLogger("feature_api")
+from config.logging_config import configure_logging
+from config.settings import settings
+
+# Structured JSON logger — output parseable by Cloud Logging / Datadog / Splunk.
+# Filter in production: jsonPayload.service = "feature_api" AND level = "ERROR"
+logger = configure_logging("feature_api")
 
 # --- Configuration & State ---
-REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
-REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 FRESHNESS_LIMIT_HOURS = 25
 API_KEY_NAME = "X-API-Key"
-DUMMY_API_KEY = "sk_test_123"
 
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=True)
 
@@ -42,16 +43,22 @@ redis_client: redis.Redis = None
 async def lifespan(_: FastAPI):
     global redis_client
     redis_client = redis.Redis(
-        host=REDIS_HOST,
-        port=REDIS_PORT,
+        host=settings.redis_host,
+        port=settings.redis_port,
         db=0,
         decode_responses=True,
     )
     try:
         redis_client.ping()
-        logger.info("Feature API started; Redis pool initialized.")
+        logger.info(
+            "Feature API started — Redis pool ready",
+            extra={"redis_host": settings.redis_host, "redis_port": settings.redis_port},
+        )
     except redis.ConnectionError:
-        logger.error("Feature API started but Redis is unreachable.")
+        logger.error(
+            "Feature API started but Redis is unreachable",
+            extra={"redis_host": settings.redis_host, "redis_port": settings.redis_port},
+        )
     yield
     if redis_client:
         redis_client.close()
@@ -69,20 +76,55 @@ app = FastAPI(
 
 # --- Middleware ---
 @app.middleware("http")
-async def add_process_time_header(request: Request, call_next):
-    """Simple latency monitor."""
+async def observability_middleware(request: Request, call_next):
+    """
+    Injects a correlation ID and emits a structured access log per request.
+
+    X-Request-ID:
+        Generated server-side if not provided by the caller.
+        Propagate this header from your API gateway / load balancer to get
+        end-to-end traceability across microservices.
+
+    Structured log fields emitted per request:
+        method, path, status_code, duration_ms, request_id
+        → Filterable in Cloud Logging / Datadog without regex:
+          jsonPayload.status_code >= 500 AND jsonPayload.service = "feature_api"
+    """
+    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
     start_time = time.perf_counter()
+
     response = await call_next(request)
-    process_time = time.perf_counter() - start_time
-    # Record process time in milliseconds
-    response.headers["X-Process-Time-Ms"] = f"{process_time * 1000:.2f}"
+
+    duration_ms = (time.perf_counter() - start_time) * 1000
+    response.headers["X-Request-ID"] = request_id
+    response.headers["X-Process-Time-Ms"] = f"{duration_ms:.2f}"
+
+    log_level = logger.warning if response.status_code >= 400 else logger.info
+    log_level(
+        "%s %s → %d",
+        request.method,
+        request.url.path,
+        response.status_code,
+        extra={
+            "method": request.method,
+            "path": request.url.path,
+            "status_code": response.status_code,
+            "duration_ms": round(duration_ms, 2),
+            "request_id": request_id,
+        },
+    )
     return response
 
 
 # --- Dependencies ---
 def get_api_key(api_key: str = Security(api_key_header)) -> str:
-    """Validate the incoming API key."""
-    if api_key != DUMMY_API_KEY:
+    """
+    Validate the incoming API key against the value injected from AppSettings.
+
+    In production, settings.api_key is set via Kubernetes Secret or
+    GCP Secret Manager — never hardcoded in source.
+    """
+    if api_key != settings.api_key:
         raise HTTPException(status_code=403, detail="Invalid API Key. Access denied.")
     return api_key
 

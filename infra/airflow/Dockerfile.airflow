@@ -1,0 +1,54 @@
+# ─── Airflow Custom Image ───────────────────────────────────────────────────
+# Builds a production-grade Airflow image with all pipeline dependencies baked
+# into the image layer at build time.
+#
+# 12-Factor V (Build, Release, Run):
+#   Dependencies are resolved ONCE at build time (docker build), not at
+#   container start time. This is the production-standard approach used in
+#   Cloud Composer 2 (GCP) and MWAA (AWS) custom image workflows.
+#
+#   Anti-pattern avoided: _PIP_ADDITIONAL_REQUIREMENTS runs pip at container
+#   startup — it breaks on conflicting transitive deps, adds 60-120s to startup
+#   time, and produces non-deterministic builds.
+#
+# Build:
+#   docker build -f infra/airflow/Dockerfile.airflow -t fraud-airflow:local .
+#
+# Cloud Composer equivalent:
+#   gcloud composer environments create ... \
+#     --image-version=composer-2.x.x-airflow-2.9.0 \
+#     --pypi-packages=dbt-postgres==1.8.2,...
+# ─────────────────────────────────────────────────────────────────────────────
+
+ARG AIRFLOW_VERSION=2.9.0
+ARG PYTHON_VERSION=3.11
+
+FROM apache/airflow:${AIRFLOW_VERSION}-python${PYTHON_VERSION}
+
+# Switch to root to install system dependencies if needed.
+USER root
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Required by psycopg2-binary for Postgres connectivity
+    libpq-dev \
+    # git is needed if any pip packages install from VCS refs
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Switch back to the airflow user — never run the Airflow process as root.
+USER airflow
+
+# ── Python Dependencies ──────────────────────────────────────────────────────
+# Pin exact versions to guarantee reproducible builds.
+# Versions are aligned with the host-side pyproject.toml to ensure identical
+# behaviour between the Airflow container and local CLI runs.
+COPY --chown=airflow:root requirements.airflow.txt /requirements.airflow.txt
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r /requirements.airflow.txt
+
+# ── PYTHONPATH ───────────────────────────────────────────────────────────────
+# Expose the project root so DAGs can import from feature_store.src.loader
+# without installing the project as a package.
+ENV PYTHONPATH="/opt/airflow:${PYTHONPATH}"
+
+# Airflow entrypoint is inherited from the base image.

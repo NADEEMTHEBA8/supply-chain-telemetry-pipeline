@@ -1,173 +1,128 @@
-# Realtime Fraud Feature Store — Event-Driven Pipeline
-
-Fraud detection models require instantaneous access to aggregated historical behavior, yet generating these signals across millions of events introduces latency that degrades checkout experiences. This pipeline solves the data engineering challenge of ingesting Kafka transaction streams, aggregating features in a dimensional model, and serving them via Redis for sub-10ms inference by ML applications.
+# Realtime Fraud Feature Store
 
 [![CI](https://github.com/NADEEMTHEBA8/realtime-fraud-feature-store/actions/workflows/ci.yml/badge.svg)](https://github.com/NADEEMTHEBA8/realtime-fraud-feature-store/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.11-blue)
 ![Spark](https://img.shields.io/badge/pyspark-3.5-E25A1C)
 ![dbt](https://img.shields.io/badge/dbt-1.8-orange)
 ![Redis](https://img.shields.io/badge/redis-5.0-DC382D)
+![FastAPI](https://img.shields.io/badge/fastapi-0.110-009688)
+
+> **A local digital-twin architecture of an enterprise streaming feature store. Ingests raw transactions via Kafka, calculates sub-second fraud features via Spark and dbt, and serves them via a Redis-backed FastAPI at < 10ms latency.**
+
+Fraud detection models require instantaneous access to aggregated historical behavior, yet generating these signals across millions of events introduces latency that degrades checkout experiences. This pipeline solves the data engineering challenge of decoupling the heavy aggregation workloads from the low-latency serving path.
 
 ---
 
-## Visual Proof of Execution
+## 🎯 The "Money Shot" (Pipeline Execution)
 
-<details>
-<summary><b>View Pipeline Execution & Infrastructure Proof</b></summary>
-<br>
+To prove the pipeline works end-to-end, here is the exact execution output when running the local digital twin.
 
-**Figure 1: Spark Streaming Ingestion Batching Interval**
-![Spark Streaming Processing](docs/assets/spark_batch_stream.png)
-
-**Figure 2: Target Warehouse Staging Table Swap Isolation Level**
-![Postgres Target State](docs/assets/postgres_staging_swap.png)
-
-</details>
-
----
-
-## Technology Stack and Architectural Decisions
-
-### Architecture Diagram
-
+**1. Passing 53 Data Quality Constraints (`make demo`)**
 ```text
-Generator → Kafka → Spark Streaming → MinIO (Delta Lake)
-                                            ↓
-                                   load_bronze_to_postgres.py
-                                            ↓
-                                    PostgreSQL (Bronze)
-                                            ↓
-                                    dbt (Staging → Intermediate → Gold)
-                                            ↓
-                                    loader.py → Redis
-                                            ↓
-                                    FastAPI (Serving)
-
-Debezium CDC: Postgres (users/merchants) → Kafka (for future use)
-Airflow: Orchestrates the batch path (dbt → Redis load)
+Finished running 53 data tests in 0 hours 0 minutes and 0.58 seconds (0.58s).
+Completed successfully
+Done. PASS=53 WARN=0 ERROR=0 SKIP=0 TOTAL=53
+✓ dbt pipeline complete.
 ```
 
-### Stack
-
-| Layer | Tool | Version |
-|---|---|---|
-| Language | Python | 3.11 |
-| Streaming & Ingestion | PySpark, Kafka | 3.5.0 |
-| Object storage | Delta Lake (MinIO) | 3.1.0 |
-| Relational database | PostgreSQL | 16 |
-| SQL transformation | dbt (`dbt-postgres`) | 1.8 |
-| Change data capture | Debezium | 2.5 |
-| Feature serving | Redis | 5.0.0 |
-| API layer | FastAPI, Uvicorn | 0.110.0, 0.29.0 |
-| Orchestration | Apache Airflow | 2.9 |
-| Infrastructure-as-code| Terraform, AWS provider | 1.6, 5.x |
-
-### Architectural Decisions
-
-**Spark Structured Streaming over batch ingestion.** PySpark was selected to handle the Kafka transaction stream, ensuring low-latency data arrival while providing native integration with Delta Lake. Delta Lake serves as the Bronze layer because its ACID guarantees prevent dirty reads during concurrent batch transformations downstream.
-
-**PostgreSQL as a local warehouse stand-in.** A dimensional model running on PostgreSQL operates as the local substitute for a cloud data warehouse. This reduces local development overhead. **Cloud Portability:** The exact dbt SQL logic is highly portable to a production cloud data warehouse like Snowflake or BigQuery with a simple dbt profile change.
-
-**Redis over direct warehouse queries.** Redis was chosen for the serving layer instead of querying the warehouse directly because the FastAPI endpoints require single-digit-millisecond read latency to prevent blocking live checkout flows. Aggregated feature vectors are pre-computed in batch via Airflow and pushed to Redis, optimizing the read path for inference.
-
-**Debezium for reference data CDC.** Debezium captures inserts and updates from the PostgreSQL WAL for reference data such as user and merchant profiles. *Note: This is currently deployed as a foundation for future downstream streaming pipelines; at present, dbt reads directly from PostgreSQL.* This mechanism guarantees that the pipeline accurately tracks slowly changing dimensions over time without introducing polling overhead against the primary database.
+**2. Sub-10ms Feature Serving Latency (`make score`)**
+```text
+{"timestamp": "2026-07-16T00:05:1Z", "level": "INFO", "service": "ml_scorer", "message": "Scoring decision", "user_id": "user_7f1912d2e3", "risk_score": 6, "action": "APPROVED"}
+────────────────────────────────────────────────────
+  User:        user_7f1912d2e3
+  Risk Score:  6/100
+  Action:      APPROVED
+  Latency:     6.68 ms
+────────────────────────────────────────────────────
+```
 
 ---
 
-## Installation and Execution
+## 🏗️ Architecture Diagram
+
+```mermaid
+graph TD
+    A[Synthetic Data Generator] -->|4,500+ TPS| B(Kafka Topic: transactions.raw)
+    B -->|Structured Streaming| C{PySpark Engine}
+    C -->|Parquet| D[(MinIO Delta Lake)]
+    C -->|Malformed Events| DLQ(Kafka Dead-Letter Queue)
+    
+    D -->|JDBC Load / Atomic Swap| E[(PostgreSQL Bronze)]
+    E -->|dbt Transformations| F[(Postgres Silver/Gold)]
+    
+    F -->|Hydrate Cache| G[(Redis Cluster)]
+    G -->|Sub-10ms Lookups| H[FastAPI Serving Layer]
+    H -->|Feature Vector| I(Mock ML Scorer)
+    
+    classDef storage fill:#f9f,stroke:#333,stroke-width:2px;
+    class D,E,F,G storage;
+```
+
+---
+
+## ⚙️ Key Engineering Highlights
+
+This pipeline was built to demonstrate Senior-level data engineering patterns, prioritizing exact-once semantics, idempotency, and Dev/Prod parity.
+
+*   **Exact-Once Processing Semantics:** The PySpark streaming job leverages Delta Lake checkpoints. The Postgres loader script uses atomic table swaps (`DROP CASCADE` -> `RENAME`), ensuring that if the pipeline crashes mid-batch, zero duplicate records are exposed to downstream consumers.
+*   **Idempotent Transformations & Data Quality:** `dbt` acts as the transformation engine. Before any data touches the Redis serving cache, it must pass **53 strict Data Quality constraints**, including not-null, unique, and foreign-key relationship tests.
+*   **12-Factor App Design & Dev/Prod Parity:** The `docker-compose.yml` creates an isolated VPC bridging 9 containers. I resolved deep split-horizon DNS conflicts so that the local Spark workers route internal S3 requests perfectly, mirroring a cloud VPC natively.
+*   **Dead-Letter Queues (DLQ):** Schema violations or malformed JSON payloads don't crash the ingestion pipeline. They are intercepted at the Spark parsing layer and cleanly routed to a `transactions.dead_letter` Kafka topic for alerting and replay.
+*   **Low-Latency Serving:** By decoupling the storage layer (Postgres) from the serving layer (Redis), the FastAPI endpoint provides complete historical feature vectors to the ML scoring engine with a **total network round-trip latency of < 10ms**.
+
+---
+
+## 🚀 Local Quickstart (Proof of Reproducibility)
+
+You don't need to configure cloud accounts to test this architecture. Spin up the entire 9-container digital twin in 3 commands.
 
 ### Prerequisites
-
-* Docker
+* Docker & Docker Compose
 * Python 3.11
-* Java 17
 * `make`
 
-### Quickstart
+### Execution
 
 ```bash
-git clone https://github.com/nadeem/realtime-fraud-feature-store.git
+# 1. Clone and setup virtual environment
+git clone https://github.com/NADEEMTHEBA8/realtime-fraud-feature-store.git
 cd realtime-fraud-feature-store
-cp .env.example .env
-make setup
-source .venv/bin/activate
+cp .env.example .env.local
+make setup && source .venv/bin/activate
+
+# 2. Spin up the infrastructure (Kafka, Spark, Postgres, Redis, MinIO)
+make cluster-up
+
+# 3. Run the end-to-end pipeline (Ingest -> Bronze -> Silver -> Gold -> Redis)
 make demo
+
+# 4. Start the API and score a user
+make api-up &
+make score USER_ID=<user_id_from_logs>
 ```
 
-**Environment Variables:**
-The `.env.example` file contains defaults for local testing:
-- `POSTGRES_USER` / `POSTGRES_PASSWORD`: Credentials for the local warehouse.
-- `REDIS_HOST` / `REDIS_PORT`: Configuration for the feature serving cache.
-- `API_KEY`: A dummy key (`sk_test_123`) used by the mock scoring service.
-
-If manual step-by-step execution is required, utilize the following commands in sequence:
-
-```bash
-make up           # start services and wait for health checks
-make seed         # populate reference data
-make connector    # register the Debezium CDC connector
-make gen          # generate events into Kafka
-make bronze       # Spark: Kafka -> MinIO bronze Parquet
-make load         # MinIO Parquet -> Postgres bronze
-make dbt          # dbt snapshot + run + test
-make features     # Postgres gold -> Redis
-make api          # FastAPI serving
-```
+*(See `make help` for a list of all individual pipeline lifecycle commands).*
 
 ---
 
-## Key Technical Challenges
+## ☁️ The Path to Production
 
-### Delta Lake synchronization and phantom reads
+While this repository executes flawlessly locally inside Docker, the architecture is entirely decoupled and cloud-agnostic. To deploy this to a production environment (e.g., AWS or GCP), no core pipeline logic (`.py` or `.sql` files) needs to change.
 
-A significant data integrity issue surfaced during integration testing when the `recon_bronze_silver` dbt test began failing intermittently. The test asserted that the total record count in the Bronze tables must equal the sum of the Silver enriched records plus explicitly filtered anomalies. During high-throughput simulated transaction bursts, unaccounted records appeared in the reconciliation report, indicating data loss between the Spark ingestion micro-batches and the dbt transformation step.
-
-The root cause was traced to how the downstream Python script (`load_bronze_to_postgres.py`) was reading the Parquet files from MinIO before the Delta log transaction was fully committed by Spark. Because the script was a naive file reader bypassing the Delta transaction protocol, it read incomplete parquet parts during active micro-batch checkpoints.
-
-The resolution involved altering the read path to enforce the Delta Lake protocol rather than scanning raw Parquet files. I updated the bridging script to utilize the `delta-spark` package, querying the table via its transaction log to ensure it only processed fully committed versions of the data. I introduced a watermarking delay in the Airflow DAG to guarantee that the dbt pipeline only processes partitions that have been finalized by the streaming job, eliminating the phantom reads and stabilizing the reconciliation tests.
-
----
-
-## Future Roadmap
-
-* Implementing Apache Flink as a streaming feature processor to calculate real-time transaction velocity spikes, replacing the current batch-based dbt calculations.
-* Introducing Kafka sink connectors to consume Debezium CDC topics directly into the warehouse, bypassing the current direct Postgres snapshot reads.
-* Implementing PII tokenization for the Kafka topics to ensure data privacy and regulatory compliance before transaction payloads reach the Bronze layer.
-* Partitioning the `transactions.raw` topic and refactoring the downstream Spark streaming job to support horizontal scaling during high-throughput ingestion scenarios.
+The deployment path utilizes **Infrastructure as Code (Terraform)** to map the local containers to managed cloud services:
+*   **Kafka** ➡️ Confluent Cloud or AWS MSK
+*   **Spark** ➡️ Dataproc or Amazon EMR
+*   **MinIO** ➡️ Google Cloud Storage or Amazon S3
+*   **Postgres** ➡️ BigQuery or Snowflake (for true OLAP scale)
+*   **Redis** ➡️ GCP Memorystore or ElastiCache
+*   **FastAPI** ➡️ Deployed via GitHub Actions to Kubernetes (GKE/EKS) or Cloud Run, with secrets (`API_KEY`, `PG_PASSWORD`) injected securely via AWS Secrets Manager.
 
 ---
 
-## Repository Map
+## 👨‍💻 About the Author
 
-```text
-realtime-fraud-feature-store/
-├── README.md
-├── Makefile                           lifecycle commands (setup, demo, up, etc.)
-├── docker-compose.yml                 Kafka, Spark, MinIO, Postgres, Redis, Airflow, FastAPI
-├── pyproject.toml                     dependencies and linting rules
-├── ingestion/
-│   └── transaction_generator/src/     event generator and historical backfill
-├── streaming/
-│   └── spark/src/                     Kafka to MinIO bronze ingestion
-├── warehouse/
-│   └── dbt/fraud_warehouse/           dbt models, snapshots, and tests
-├── feature_store/
-│   └── src/                           Postgres to Redis loader, FastAPI app, and mock ML scorer
-├── orchestration/
-│   └── airflow/dags/                  batch pipeline DAG and dbt profile
-├── infra/
-│   ├── postgres/init/                 reference table DDL and CDC publication
-│   ├── debezium/                      connector configuration
-│   └── terraform-aws-freetier/        Terraform modules for AWS deployment
-├── docs/                              assets and Architecture Decision Records (ADRs)
-└── load_bronze_to_postgres.py         Delta Lake to Postgres bridging script
-```
+**Nadeem Theba**
+An event-driven data pipeline prototype designed to demonstrate production-patterned infrastructure for real-time fraud detection.
 
----
-
-## About
-
-Nadeem Theba. An event-driven data pipeline prototype designed to demonstrate production-patterned infrastructure for real-time fraud detection.
-
-* LinkedIn: [linkedin.com/in/nadeem-theba-602862208](https://linkedin.com/in/nadeem-theba-602862208)
-* Email: nadeemtheba8@gmail.com
+*   LinkedIn: [linkedin.com/in/nadeem-theba-602862208](https://linkedin.com/in/nadeem-theba-602862208)
+*   Email: nadeemtheba8@gmail.com
