@@ -4,187 +4,187 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
+    }
   }
 }
 
 provider "aws" {
-  region = "us-east-1"
+  region = var.aws_region
+}
+
+variable "aws_region" {
+  default = "us-east-1"
+}
+
+variable "project_name" {
+  default = "te-supply-chain-telemetry"
 }
 
 # -----------------------------------------------------------------------------
-# VPC and Networking (Default VPC for Free Tier simplicity)
+# S3 — Delta Lakehouse Storage (Bronze / Silver / Gold)
+# All Databricks Delta tables land here. Replaces the self-hosted MinIO
+# instance in the original fraud pipeline.
 # -----------------------------------------------------------------------------
-data "aws_vpc" "default" {
-  default = true
-}
-
-data "aws_subnets" "default" {
-  filter {
-    name   = "vpc-id"
-    values = [data.aws_vpc.default.id]
-  }
-}
-
-# Security group for EC2 instance (allowing SSH and web traffic)
-resource "aws_security_group" "ec2_sg" {
-  name        = "fraud_feature_store_ec2_sg"
-  description = "Allow inbound SSH and HTTP"
-  vpc_id      = data.aws_vpc.default.id
-
-  ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"] # TODO: Restrict to your IP in production
-  }
-
-  ingress {
-    from_port   = 8000
-    to_port     = 8000
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-}
-
-# Security group for RDS
-resource "aws_security_group" "rds_sg" {
-  name        = "fraud_feature_store_rds_sg"
-  description = "Allow Postgres traffic from EC2"
-  vpc_id      = data.aws_vpc.default.id
-
-  ingress {
-    from_port       = 5432
-    to_port         = 5432
-    protocol        = "tcp"
-    security_groups = [aws_security_group.ec2_sg.id]
-  }
-}
-
-# Security group for Redis
-resource "aws_security_group" "redis_sg" {
-  name        = "fraud_feature_store_redis_sg"
-  description = "Allow Redis traffic from EC2"
-  vpc_id      = data.aws_vpc.default.id
-
-  ingress {
-    from_port       = 6379
-    to_port         = 6379
-    protocol        = "tcp"
-    security_groups = [aws_security_group.ec2_sg.id]
-  }
-}
-
-# -----------------------------------------------------------------------------
-# S3 Data Lake (Bronze layer)
-# -----------------------------------------------------------------------------
-resource "aws_s3_bucket" "bronze_lake" {
-  bucket_prefix = "fraud-feature-store-bronze-"
-}
-
-# -----------------------------------------------------------------------------
-# RDS PostgreSQL
-# -----------------------------------------------------------------------------
-resource "random_password" "db_password" {
-  length  = 16
-  special = false
-}
-resource "aws_db_instance" "postgres" {
-  identifier           = "fraud-feature-store-db"
-  allocated_storage    = 20
-  engine               = "postgres"
-  engine_version       = "16"
-  instance_class       = "db.t4g.micro" # Free tier eligible
-  username             = "fraud_admin"
-  password             = random_password.db_password.result
-  parameter_group_name = "default.postgres16"
-  skip_final_snapshot  = true
-  publicly_accessible  = false
-  vpc_security_group_ids = [aws_security_group.rds_sg.id]
-}
-
-# -----------------------------------------------------------------------------
-# ElastiCache Redis
-# -----------------------------------------------------------------------------
-resource "aws_elasticache_subnet_group" "redis_subnet_group" {
-  name       = "fraud-feature-store-redis-subnet"
-  subnet_ids = data.aws_subnets.default.ids
-}
-
-resource "aws_elasticache_cluster" "redis" {
-  cluster_id           = "fraud-feature-store-redis"
-  engine               = "redis"
-  node_type            = "cache.t3.micro" # Free tier eligible
-  num_cache_nodes      = 1
-  parameter_group_name = "default.redis7"
-  engine_version       = "7.0"
-  port                 = 6379
-  security_group_ids   = [aws_security_group.redis_sg.id]
-  subnet_group_name    = aws_elasticache_subnet_group.redis_subnet_group.name
-}
-
-# -----------------------------------------------------------------------------
-# EC2 Instance
-# -----------------------------------------------------------------------------
-data "aws_ami" "amazon_linux_2023" {
-  most_recent = true
-  owners      = ["amazon"]
-
-  filter {
-    name   = "name"
-    values = ["al2023-ami-2023.*-x86_64"]
-  }
-}
-
-resource "aws_instance" "compute" {
-  ami           = data.aws_ami.amazon_linux_2023.id
-  instance_type = "t2.micro" # Free tier eligible
-  
-  vpc_security_group_ids = [aws_security_group.ec2_sg.id]
-
-  user_data = <<-EOF
-              #!/bin/bash
-              dnf update -y
-              dnf install -y docker git
-              systemctl start docker
-              systemctl enable docker
-              usermod -aG docker ec2-user
-              
-              # Install docker-compose
-              curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-              chmod +x /usr/local/bin/docker-compose
-              
-              # Export database and redis endpoints
-              echo "export RDS_ENDPOINT=${aws_db_instance.postgres.endpoint}" >> /home/ec2-user/.bashrc
-              echo "export REDIS_ENDPOINT=${aws_elasticache_cluster.redis.cache_nodes[0].address}" >> /home/ec2-user/.bashrc
-              EOF
+resource "aws_s3_bucket" "lakehouse" {
+  bucket = "${var.project_name}-lake"
 
   tags = {
-    Name = "fraud_feature_store_compute"
+    Project     = var.project_name
+    Layer       = "lakehouse"
+    ManagedBy   = "terraform"
+  }
+}
+
+resource "aws_s3_bucket_versioning" "lakehouse" {
+  bucket = aws_s3_bucket.lakehouse.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+# Pre-create the folder prefixes so Databricks Auto Loader can resolve paths
+resource "aws_s3_object" "raw_prefix" {
+  bucket  = aws_s3_bucket.lakehouse.id
+  key     = "raw/machine-telemetry/"
+  content = ""
+}
+
+resource "aws_s3_object" "bronze_prefix" {
+  bucket  = aws_s3_bucket.lakehouse.id
+  key     = "delta/bronze_machine_telemetry/"
+  content = ""
+}
+
+resource "aws_s3_object" "silver_prefix" {
+  bucket  = aws_s3_bucket.lakehouse.id
+  key     = "delta/silver_telemetry/"
+  content = ""
+}
+
+resource "aws_s3_object" "gold_risk_prefix" {
+  bucket  = aws_s3_bucket.lakehouse.id
+  key     = "delta/gold_supply_risk/"
+  content = ""
+}
+
+resource "aws_s3_object" "checkpoint_prefix" {
+  bucket  = aws_s3_bucket.lakehouse.id
+  key     = "checkpoints/"
+  content = ""
+}
+
+# -----------------------------------------------------------------------------
+# Amazon Kinesis Data Streams — Real-time telemetry ingestion
+# Replaces the self-hosted Kafka cluster. Free tier: 1 shard.
+# Production equivalent: Amazon MSK with multiple brokers.
+# -----------------------------------------------------------------------------
+resource "aws_kinesis_stream" "machine_telemetry" {
+  name        = "${var.project_name}-telemetry"
+  shard_count = 1
+
+  retention_period = 24  # hours
+
+  tags = {
+    Project   = var.project_name
+    Purpose   = "machine-telemetry-ingestion"
+    ManagedBy = "terraform"
   }
 }
 
 # -----------------------------------------------------------------------------
-# Outputs
+# IAM — Databricks access to S3 and Kinesis
+# Databricks Community Edition uses Access Key + Secret for S3 access.
+# -----------------------------------------------------------------------------
+resource "aws_iam_user" "databricks_pipeline" {
+  name = "${var.project_name}-databricks-user"
+}
+
+resource "aws_iam_access_key" "databricks_pipeline" {
+  user = aws_iam_user.databricks_pipeline.name
+}
+
+resource "aws_iam_policy" "pipeline_policy" {
+  name        = "${var.project_name}-policy"
+  description = "Allows Databricks to read/write S3 lakehouse and produce to Kinesis"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "S3LakehouseAccess"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject",
+          "s3:ListBucket",
+          "s3:GetBucketLocation",
+        ]
+        Resource = [
+          aws_s3_bucket.lakehouse.arn,
+          "${aws_s3_bucket.lakehouse.arn}/*",
+        ]
+      },
+      {
+        Sid    = "KinesisProducerAccess"
+        Effect = "Allow"
+        Action = [
+          "kinesis:PutRecord",
+          "kinesis:PutRecords",
+          "kinesis:GetRecords",
+          "kinesis:GetShardIterator",
+          "kinesis:DescribeStream",
+          "kinesis:ListStreams",
+        ]
+        Resource = aws_kinesis_stream.machine_telemetry.arn
+      },
+    ]
+  })
+}
+
+resource "aws_iam_user_policy_attachment" "databricks_attach" {
+  user       = aws_iam_user.databricks_pipeline.name
+  policy_arn = aws_iam_policy.pipeline_policy.arn
+}
+
+# -----------------------------------------------------------------------------
+# Outputs — values needed to configure Databricks and the generator
 # -----------------------------------------------------------------------------
 output "s3_bucket_name" {
-  value = aws_s3_bucket.bronze_lake.bucket
+  description = "S3 bucket name for the Delta Lakehouse"
+  value       = aws_s3_bucket.lakehouse.bucket
 }
 
-output "rds_endpoint" {
-  value = aws_db_instance.postgres.endpoint
+output "kinesis_stream_name" {
+  description = "Kinesis stream name for the telemetry producer"
+  value       = aws_kinesis_stream.machine_telemetry.name
 }
 
-output "redis_endpoint" {
-  value = aws_elasticache_cluster.redis.cache_nodes[0].address
+output "databricks_access_key_id" {
+  description = "IAM Access Key ID for Databricks S3 mount"
+  value       = aws_iam_access_key.databricks_pipeline.id
+  sensitive   = true
 }
 
-output "ec2_public_ip" {
-  value = aws_instance.compute.public_ip
+output "databricks_secret_access_key" {
+  description = "IAM Secret Access Key for Databricks S3 mount"
+  value       = aws_iam_access_key.databricks_pipeline.secret
+  sensitive   = true
+}
+
+output "mount_command" {
+  description = "Run this in a Databricks notebook to mount the S3 bucket"
+  value = <<-EOT
+    dbutils.fs.mount(
+      source="s3a://${aws_s3_bucket.lakehouse.bucket}",
+      mount_point="/mnt/te-supply-chain",
+      extra_configs={
+        "fs.s3a.access.key": "<ACCESS_KEY_ID>",
+        "fs.s3a.secret.key": "<SECRET_ACCESS_KEY>"
+      }
+    )
+  EOT
 }

@@ -1,41 +1,60 @@
--- Reference (dimension) tables for users and merchants.
--- Runs once on first container start via /docker-entrypoint-initdb.d.
--- Rows are populated by ingestion/transaction_generator/src/seed_reference.py.
---
--- These tables are the CDC source: Debezium captures inserts/updates from
--- the Postgres WAL and publishes them to Kafka. wal_level=logical is already
--- set in docker-compose.
+-- Supply Chain Reference Tables
+-- Replaces the fraud pipeline's users/merchants tables.
+-- These are the CDC source tables — Debezium tails the WAL and publishes
+-- changes to Kafka topics that flow into the Bronze S3 layer.
+-- In production, AWS DMS replicates this ERP data directly.
 
-CREATE TABLE IF NOT EXISTS public.users (
-    user_id      TEXT PRIMARY KEY,
-    email_hash   TEXT        NOT NULL,
-    phone_hash   TEXT        NOT NULL,
-    city         TEXT        NOT NULL,
-    country      TEXT        NOT NULL,
-    kyc_level    TEXT        NOT NULL,   -- VERIFIED | PENDING | REJECTED
-    risk_score   NUMERIC(4,2) NOT NULL,  -- 0.00 - 1.00
-    is_blocked   BOOLEAN     NOT NULL DEFAULT FALSE,
-    created_at   TIMESTAMPTZ NOT NULL,
-    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+-- Drop old fraud tables if they exist
+DROP TABLE IF EXISTS public.merchants CASCADE;
+DROP TABLE IF EXISTS public.users CASCADE;
+
+-- Machine master data (maps to Amazon Connect Decisions 'site' entity)
+CREATE TABLE IF NOT EXISTS public.machines (
+    machine_id              VARCHAR(20)  PRIMARY KEY,
+    plant_id                VARCHAR(20)  NOT NULL,
+    machine_type            VARCHAR(50)  NOT NULL,
+    installed_at            TIMESTAMPTZ  NOT NULL,
+    baseline_temp_c         DOUBLE PRECISION NOT NULL,
+    baseline_vibration_hz   DOUBLE PRECISION NOT NULL,
+    is_active               BOOLEAN      NOT NULL DEFAULT TRUE,
+    created_at              TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at              TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS public.merchants (
-    merchant_id     TEXT PRIMARY KEY,
-    merchant_name   TEXT         NOT NULL,
-    category        TEXT         NOT NULL,  -- see profiles.MERCHANT_CATEGORIES
-    risk_tier       TEXT         NOT NULL,  -- LOW | MEDIUM | HIGH
-    avg_ticket_size NUMERIC(12,2) NOT NULL,
-    is_active       BOOLEAN      NOT NULL DEFAULT TRUE,
-    onboarded_at    TIMESTAMPTZ  NOT NULL,
-    updated_at      TIMESTAMPTZ  NOT NULL DEFAULT now()
+-- Supplier master data (maps to Amazon Connect Decisions 'tpartner' entity)
+CREATE TABLE IF NOT EXISTS public.suppliers (
+    supplier_id             VARCHAR(20)  PRIMARY KEY,
+    supplier_name           VARCHAR(100) NOT NULL,
+    part_id                 VARCHAR(20)  NOT NULL,
+    avg_lead_time_days      INTEGER      NOT NULL,
+    unit_cost               NUMERIC(10, 2) NOT NULL,
+    is_active               BOOLEAN      NOT NULL DEFAULT TRUE,
+    created_at              TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at              TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
--- REPLICA IDENTITY FULL so Debezium update events carry the full before-image.
--- Without this, pgoutput only emits primary-key columns for the old row.
-ALTER TABLE public.users     REPLICA IDENTITY FULL;
-ALTER TABLE public.merchants REPLICA IDENTITY FULL;
+-- Inventory levels (maps to Amazon Connect Decisions 'inventory_level' entity)
+CREATE TABLE IF NOT EXISTS public.inventory_levels (
+    id                      SERIAL       PRIMARY KEY,
+    part_id                 VARCHAR(20)  NOT NULL,
+    supplier_id             VARCHAR(20)  REFERENCES public.suppliers(supplier_id),
+    warehouse_id            VARCHAR(20)  NOT NULL,
+    stock_level             INTEGER      NOT NULL DEFAULT 0,
+    transit_status          VARCHAR(20)  NOT NULL DEFAULT 'AT_WAREHOUSE',
+    reorder_point           INTEGER      NOT NULL DEFAULT 100,
+    safety_stock            INTEGER      NOT NULL DEFAULT 50,
+    snapshot_date           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at              TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
 
--- Explicit publication for the Debezium connector (referenced by name in
--- infra/debezium/postgres-source.json). Created here so the connector does
--- not need CREATE privileges at runtime.
-CREATE PUBLICATION fraud_cdc_pub FOR TABLE public.users, public.merchants;
+-- Enable logical replication for Debezium CDC
+-- (Simulates AWS DMS change data capture from ERP system)
+ALTER TABLE public.machines     REPLICA IDENTITY FULL;
+ALTER TABLE public.suppliers    REPLICA IDENTITY FULL;
+ALTER TABLE public.inventory_levels REPLICA IDENTITY FULL;
+
+-- Indexes for CDC and query performance
+CREATE INDEX IF NOT EXISTS idx_machines_plant_id    ON public.machines(plant_id);
+CREATE INDEX IF NOT EXISTS idx_inventory_part_id    ON public.inventory_levels(part_id);
+CREATE INDEX IF NOT EXISTS idx_inventory_warehouse  ON public.inventory_levels(warehouse_id);
+CREATE INDEX IF NOT EXISTS idx_inventory_updated    ON public.inventory_levels(updated_at);

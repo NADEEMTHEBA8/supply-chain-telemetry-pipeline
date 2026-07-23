@@ -1,140 +1,212 @@
-# Realtime Fraud Feature Store
+# Predictive Supply Chain Telemetry Pipeline
 
-[![CI](https://github.com/NADEEMTHEBA8/realtime-fraud-feature-store/actions/workflows/ci.yml/badge.svg)](https://github.com/NADEEMTHEBA8/realtime-fraud-feature-store/actions/workflows/ci.yml)
-![Python](https://img.shields.io/badge/python-3.11-blue)
-![Spark](https://img.shields.io/badge/pyspark-3.5-E25A1C)
+[![CI](https://github.com/NADEEMTHEBA8/supply-chain-telemetry-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/NADEEMTHEBA8/supply-chain-telemetry-pipeline/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/Python-3.11-blue)
+![Databricks](https://img.shields.io/badge/Databricks-Runtime%2015.x-FF3621)
+![Delta Lake](https://img.shields.io/badge/Delta%20Lake-3.x-003366)
+![AWS](https://img.shields.io/badge/AWS-S3%20%7C%20Kinesis-FF9900)
 ![dbt](https://img.shields.io/badge/dbt-1.8-orange)
-![Redis](https://img.shields.io/badge/redis-5.0-DC382D)
-![FastAPI](https://img.shields.io/badge/fastapi-0.110-009688)
+![Terraform](https://img.shields.io/badge/Terraform-1.6-7B42BC)
 
-> **A local digital-twin architecture of an enterprise streaming feature store. Ingests raw transactions via Kafka, calculates sub-second fraud features via Spark and dbt, and serves them via a Redis-backed FastAPI at < 10ms latency.**
-
-Fraud detection models require instantaneous access to aggregated historical behavior, yet generating these signals across millions of events introduces latency that degrades checkout experiences. This pipeline solves the data engineering challenge of decoupling the heavy aggregation workloads from the low-latency serving path.
+Traditional ERP systems report on supply chain health hours or days after the fact. By the time a planner sees that a manufacturing line is at risk of stopping, the damage is done — production halts, safety stock is exhausted, and working capital is tied up in emergency procurement. This pipeline solves the **real-time supply chain intelligence** problem by ingesting factory machine telemetry and ERP inventory events at high throughput, processing them through a Medallion Lakehouse architecture on Databricks and AWS S3, and surfacing aggregated risk scores to Amazon Connect Decisions for automated supply planning.
 
 ---
 
-## 🎯 The "Money Shot" (Pipeline Execution)
+## Visual Proof of Execution
 
-To prove the pipeline works end-to-end, here is the exact execution output when running the local digital twin.
+<details>
+<summary><b>View Pipeline Execution & Infrastructure Proof</b></summary>
+<br>
 
-**1. Passing 53 Data Quality Constraints (`make demo`)**
+**Figure 1: Databricks Auto Loader — Bronze Ingestion Running**
+![Databricks Auto Loader](docs/assets/databricks_autoloader_running.png)
+
+**Figure 2: AWS S3 — Delta Lake Bronze Layer (Real S3 Bucket)**
+![AWS S3 Delta Lake](docs/assets/s3_delta_bronze_layer.png)
+
+**Figure 3: Amazon Kinesis — Live Telemetry Stream Receiving Data**
+![Kinesis Stream](docs/assets/kinesis_stream_incoming.png)
+
+**Figure 4: Databricks SQL — Gold Supply Risk Table (Top 10 At-Risk Machines)**
+![Gold Supply Risk](docs/assets/databricks_gold_supply_risk.png)
+
+**Figure 5: dbt — All Supply Chain Models Green**
+![dbt Models Green](docs/assets/dbt_models_success.png)
+
+</details>
+
+---
+
+## Architecture
+
 ```text
-Finished running 53 data tests in 0 hours 0 minutes and 0.58 seconds (0.58s).
-Completed successfully
-Done. PASS=53 WARN=0 ERROR=0 SKIP=0 TOTAL=53
-✓ dbt pipeline complete.
-```
-
-**2. Sub-10ms Feature Serving Latency (`make score`)**
-```text
-{"timestamp": "2026-07-16T00:05:1Z", "level": "INFO", "service": "ml_scorer", "message": "Scoring decision", "user_id": "user_7f1912d2e3", "risk_score": 6, "action": "APPROVED"}
-────────────────────────────────────────────────────
-  User:        user_7f1912d2e3
-  Risk Score:  6/100
-  Action:      APPROVED
-  Latency:     6.68 ms
-────────────────────────────────────────────────────
+┌─────────────────────────────────────────────────────────────────────┐
+│                    DATA SOURCES                                      │
+│                                                                      │
+│  Python TelemetryGenerator          PostgreSQL ERP (via Debezium)   │
+│  (Factory IoT Sensors Simulation)   (AWS DMS in production)         │
+└──────────────┬──────────────────────────────┬───────────────────────┘
+               │                              │
+               ▼                              ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                    INGESTION LAYER                                   │
+│                                                                      │
+│         Amazon Kinesis Data Streams (te-machine-telemetry)          │
+│         [Production: Amazon MSK — ~15,000 events/sec]               │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │ Kinesis Firehose → S3
+                               ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                    COMPUTE LAYER (Databricks)                        │
+│                                                                      │
+│  Notebook 01: Auto Loader (cloudFiles) reads S3 → Bronze Delta      │
+│  Notebook 02: PySpark quality gate & enrichment → Silver Delta      │
+│  Notebook 03: Aggregation & risk scoring → Gold Delta               │
+│                                                                      │
+│  Orchestration: Databricks Workflows (multi-task job, 15min cadence)│
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │ Delta Lake writes
+                               ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                    STORAGE LAYER (AWS S3)                            │
+│                                                                      │
+│  s3://te-supply-chain-telemetry-lake/                               │
+│  ├── raw/machine-telemetry/          ← Raw JSON from Kinesis        │
+│  ├── delta/bronze_machine_telemetry/ ← Bronze Delta table (ACID)    │
+│  ├── delta/silver_telemetry/         ← Silver Delta table           │
+│  ├── delta/gold_supply_risk/         ← Gold Delta table             │
+│  └── checkpoints/                    ← Auto Loader state            │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                    SERVING LAYER                                     │
+│                                                                      │
+│  Amazon Connect Decisions ← Gold Delta (CDM-aligned supply risk)    │
+│  Power BI Dashboards      ← Databricks SQL Warehouse                │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 🏗️ Architecture Diagram
+## Technology Stack
 
-```mermaid
-graph TD
-    A[Synthetic Data Generator] -->|4,500+ TPS| B(Kafka Topic: transactions.raw)
-    B -->|Structured Streaming| C{PySpark Engine}
-    C -->|Parquet| D[(MinIO Delta Lake)]
-    C -->|Malformed Events| DLQ(Kafka Dead-Letter Queue)
-    
-    D -->|JDBC Load / Atomic Swap| E[(PostgreSQL Bronze)]
-    E -->|dbt Transformations| F[(Postgres Silver/Gold)]
-    
-    F -->|Hydrate Cache| G[(Redis Cluster)]
-    G -->|Sub-10ms Lookups| H[FastAPI Serving Layer]
-    H -->|Feature Vector| I(Mock ML Scorer)
-    
-    classDef ingestion fill:#E1F5FE,stroke:#333,stroke-width:2px,color:#333;
-    classDef compute fill:#FFF3E0,stroke:#333,stroke-width:2px,color:#333;
-    classDef storage fill:#F5F5F5,stroke:#333,stroke-width:2px,color:#333;
-    classDef serving fill:#EDE7F6,stroke:#333,stroke-width:2px,color:#333;
-    classDef messaging fill:#E8F5E9,stroke:#333,stroke-width:2px,color:#333;
-    
-    class A ingestion;
-    class C compute;
-    class D,E,F storage;
-    class G,H,I serving;
-    class B,DLQ messaging;
-```
+| Layer | Tool | Version | Role |
+|---|---|---|---|
+| Language | Python | 3.11 | Pipeline code |
+| Streaming | Amazon Kinesis Data Streams | — | Real-time telemetry ingestion |
+| Compute | Databricks (PySpark) | Runtime 15.x | Stream processing & transformation |
+| Storage | AWS S3 + Delta Lake | 3.x | Medallion Lakehouse (Bronze/Silver/Gold) |
+| Transformation | dbt (`dbt-databricks`) | 1.8 | SQL-based Silver/Gold models |
+| CDC | Debezium | 2.5 | ERP change capture (AWS DMS in production) |
+| Orchestration | Databricks Workflows | — | Multi-task job scheduling |
+| Infrastructure | Terraform (AWS provider) | 1.6 / 5.x | S3, Kinesis, IAM provisioning |
+| CI | GitHub Actions | — | Linting and type checking |
 
 ---
 
-## ⚙️ Key Engineering Highlights
+## Architectural Decisions
 
-This pipeline was built to demonstrate Senior-level data engineering patterns, prioritizing exact-once semantics, idempotency, and Dev/Prod parity.
+**Databricks Auto Loader over raw Kafka consumer.** The Bronze ingestion notebook uses `spark.readStream.format("cloudFiles")` (Databricks Auto Loader) rather than consuming directly from Kinesis. Auto Loader uses a RocksDB checkpoint store to track which S3 files have been processed, providing exactly-once semantics and fault tolerance. When the stream resumes after a Databricks cluster restart, it picks up from the precise offset without reprocessing or losing records — critical for supply chain data integrity.
 
-*   **Exact-Once Processing Semantics:** The PySpark streaming job leverages Delta Lake checkpoints. The Postgres loader script uses atomic table swaps (`DROP CASCADE` -> `RENAME`), ensuring that if the pipeline crashes mid-batch, zero duplicate records are exposed to downstream consumers.
-*   **Idempotent Transformations & Data Quality:** `dbt` acts as the transformation engine. Before any data touches the Redis serving cache, it must pass **53 strict Data Quality constraints**, including not-null, unique, and foreign-key relationship tests.
-*   **12-Factor App Design & Dev/Prod Parity:** The `docker-compose.yml` creates an isolated VPC bridging 9 containers. I resolved deep split-horizon DNS conflicts so that the local Spark workers route internal S3 requests perfectly, mirroring a cloud VPC natively.
-*   **Dead-Letter Queues (DLQ):** Schema violations or malformed JSON payloads don't crash the ingestion pipeline. They are intercepted at the Spark parsing layer and cleanly routed to a `transactions.dead_letter` Kafka topic for alerting and replay.
-*   **Low-Latency Serving:** By decoupling the storage layer (Postgres) from the serving layer (Redis), the FastAPI endpoint provides complete historical feature vectors to the ML scoring engine with a **total network round-trip latency of < 10ms**.
-*   **Throughput Benchmarks (TPS):**
-    *   *Local Digital Twin:* Sustains **2,000 - 5,000 TPS**. (Bottlenecked intentionally by local PostgreSQL JDBC write-locks during the Bronze load).
-    *   *Production Cloud:* Scales to **100,000+ TPS**. By mapping the architecture to Confluent Cloud (Kafka) and BigQuery/Snowflake (Postgres), the decoupled ingestion layer handles massive horizontal scale without changing any pipeline logic.
+**`trigger(availableNow=True)` over continuous streaming.** The Bronze ingest job uses `trigger(availableNow=True)` rather than a continuous stream. This processes all pending files and terminates, allowing Databricks Workflows to execute it on a scheduled cadence (15 minutes) while retaining the stateful exactly-once guarantees of a streaming job. This optimises compute cost — clusters run for minutes, not continuously, aligning with TE Connectivity's mandate to maximise financial returns from cloud infrastructure.
+
+**Delta Lake on S3 over PostgreSQL warehouse.** The original fraud pipeline used PostgreSQL as a local warehouse stand-in. This pipeline writes all layers directly as Delta tables on S3. Delta Lake provides ACID compliance, time travel, and schema enforcement directly on object storage — eliminating the need for a separate database tier and making every layer (Bronze, Silver, Gold) directly queryable from Databricks SQL with no additional infrastructure.
+
+**Composite risk score over raw anomaly counts.** The `gold_supply_risk` table computes a weighted composite risk score per machine per day. Raw anomaly counts are not directly actionable for Amazon Connect Decisions — a normalised score (0.0–1.0) maps cleanly to the supply planning AI's confidence thresholds, allowing planners to configure automated replenishment triggers at `risk_score > 0.7` without custom logic.
+
+**Kinesis over MSK for portfolio validation.** Amazon MSK requires a minimum of 2 brokers ($100+/month). Amazon Kinesis Data Streams demonstrates the identical streaming engineering skills at $1/month on a single shard. Both services are AWS-native, both use partition keys for shard affinity, and both integrate with Kinesis Firehose for S3 delivery. The engineering patterns are transferable to MSK with a single configuration change.
 
 ---
 
-## 🚀 Local Quickstart (Proof of Reproducibility)
+## The Elevator Pitch
 
-You don't need to configure cloud accounts to test this architecture. Spin up the entire 9-container digital twin in 3 commands.
+> *"Looking at TE Connectivity's recent strategic shift toward prioritizing financial returns and operational efficiency over pure product innovation, I realized my previous fraud detection project was structurally identical to a supply chain telemetry pipeline. I re-architected it to focus on supply-demand imbalances, which I know is a major priority for your logistics teams.*
+>
+> *The pipeline ingests simulated factory telemetry via Amazon Kinesis, processes it using Databricks Auto Loader and PySpark Structured Streaming, and lands Bronze, Silver, and Gold Delta tables directly on AWS S3. The Gold tables are specifically designed to feed Amazon Connect Decisions by mapping to the Canonical Data Model's site and inventory_level entities — preventing line stoppages and reducing the working capital tied up in excess safety stock. It takes the Medallion architecture I built previously and focuses the output entirely on bottom-line impact and operational ROI, which I understand is the core mandate for your data engineering team this year."*
+
+---
+
+## Installation and Demo Run
 
 ### Prerequisites
-* Docker & Docker Compose
-* Python 3.11
-* `make`
+- Docker + Docker Compose
+- Python 3.11
+- Terraform 1.6+
+- AWS account with Access Key + Secret Key
+- Databricks Community Edition account (`community.cloud.databricks.com`)
 
-### Execution
-
+### Step 1 — Provision AWS Infrastructure
 ```bash
-# 1. Clone and setup virtual environment
-git clone https://github.com/NADEEMTHEBA8/realtime-fraud-feature-store.git
-cd realtime-fraud-feature-store
-cp .env.example .env.local
-make setup && source .venv/bin/activate
-
-# 2. Spin up the infrastructure (Kafka, Spark, Postgres, Redis, MinIO)
-make cluster-up
-
-# 3. Run the end-to-end pipeline (Ingest -> Bronze -> Silver -> Gold -> Redis)
-make demo
-
-# 4. Start the API and score a user
-make api-up &
-make score USER_ID=<user_id_from_logs>
+cd infra/terraform-aws-freetier
+terraform init
+terraform apply
+# Note the outputs: s3_bucket_name, kinesis_stream_name, databricks_access_key_id
 ```
 
-*(See `make help` for a list of all individual pipeline lifecycle commands).*
+### Step 2 — Mount S3 in Databricks
+Run this in a Databricks notebook once:
+```python
+dbutils.fs.mount(
+    source="s3a://<YOUR_S3_BUCKET_NAME>",
+    mount_point="/mnt/te-supply-chain",
+    extra_configs={
+        "fs.s3a.access.key": "<DATABRICKS_ACCESS_KEY_ID>",
+        "fs.s3a.secret.key": "<DATABRICKS_SECRET_ACCESS_KEY>"
+    }
+)
+```
+
+### Step 3 — Start Local Services & Seed Reference Data
+```bash
+cp .env.example .env
+docker compose up -d postgres debezium
+python -m ingestion.telemetry_generator.src.seed_reference
+```
+
+### Step 4 — Push Telemetry to Kinesis
+```bash
+export KINESIS_STREAM_NAME=<YOUR_KINESIS_STREAM_NAME>
+export AWS_ACCESS_KEY_ID=<YOUR_KEY>
+export AWS_SECRET_ACCESS_KEY=<YOUR_SECRET>
+python -m ingestion.telemetry_generator.src.run --events 500
+```
+
+### Step 5 — Run Databricks Notebooks
+Import `notebooks/01_bronze_autoloader.py`, `02_silver_structuring.py`, and `03_gold_supply_risk.py` into your Databricks workspace and run them in sequence.
+
+### Step 6 — Tear Down
+```bash
+cd infra/terraform-aws-freetier
+terraform destroy
+```
+Total demo run cost: **< $0.10**
 
 ---
 
-## ☁️ The Path to Production
+## Data Model
 
-While this repository executes flawlessly locally inside Docker, the architecture is entirely decoupled and cloud-agnostic. To deploy this to a production environment (e.g., AWS or GCP), no core pipeline logic (`.py` or `.sql` files) needs to change.
+### Machine Telemetry Event (Kinesis payload)
+```json
+{
+  "machine_id": "MCH_0042",
+  "plant_id": "PLANT_MX_01",
+  "event_timestamp": "2026-07-23T14:32:01Z",
+  "temperature_celsius": 97.4,
+  "vibration_hz": 88.2,
+  "pressure_bar": 3.2,
+  "operational_status": "FAULT",
+  "error_code": "E001_OVERHEAT",
+  "rpm": 142.5,
+  "power_consumption_kw": 18.3
+}
+```
 
-The deployment path utilizes **Infrastructure as Code (Terraform)** to map the local containers to managed cloud services:
-*   **Kafka** ➡️ Confluent Cloud or AWS MSK
-*   **Spark** ➡️ Dataproc or Amazon EMR
-*   **MinIO** ➡️ Google Cloud Storage or Amazon S3
-*   **Postgres** ➡️ BigQuery or Snowflake (for true OLAP scale)
-*   **Redis** ➡️ GCP Memorystore or ElastiCache
-*   **FastAPI** ➡️ Deployed via GitHub Actions to Kubernetes (GKE/EKS) or Cloud Run, with secrets (`API_KEY`, `PG_PASSWORD`) injected securely via AWS Secrets Manager.
-
----
-
-## 👨‍💻 About the Author
-
-**Nadeem Theba**
-An event-driven data pipeline prototype designed to demonstrate production-patterned infrastructure for real-time fraud detection.
-
-*   LinkedIn: [linkedin.com/in/nadeem-theba-602862208](https://linkedin.com/in/nadeem-theba-602862208)
-*   Email: nadeemtheba8@gmail.com
+### Gold Supply Risk (Amazon Connect Decisions CDM)
+| Column | Type | Maps to CDM Entity |
+|---|---|---|
+| `machine_id` | string | `site.id` |
+| `plant_id` | string | `site.geo_id` |
+| `avg_temp_24h` | double | Anomaly signal |
+| `fault_event_count_24h` | long | Replenishment trigger |
+| `risk_score` | double | Planning confidence threshold |
