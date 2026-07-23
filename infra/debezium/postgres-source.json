@@ -1,22 +1,22 @@
 {
-  "name": "reference-postgres-source",
+  "name": "supply-chain-cdc",
   "config": {
     "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
     "tasks.max": "1",
 
     "database.hostname": "postgres",
     "database.port": "5432",
-    "database.user": "fraud_admin",
+    "database.user": "supply_chain_admin",
     "database.password": "changeme_local_only",
-    "database.dbname": "fraud_reference",
+    "database.dbname": "supply_chain_db",
 
-    "topic.prefix": "fraud_cdc",
+    "topic.prefix": "supply_chain_cdc",
     "schema.include.list": "public",
-    "table.include.list": "public.users,public.merchants",
+    "table.include.list": "public.machines,public.suppliers,public.inventory_levels",
 
     "plugin.name": "pgoutput",
-    "slot.name": "fraud_cdc_slot",
-    "publication.name": "fraud_cdc_pub",
+    "slot.name": "supply_chain_cdc_slot",
+    "publication.name": "supply_chain_cdc_pub",
 
     "tombstones.on.delete": "false",
     "decimal.handling.mode": "string",
