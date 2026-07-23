@@ -1,18 +1,17 @@
-# ─── Realtime Fraud Feature Store — Enterprise Makefile ──────────────────────
+# ─── Predictive Supply Chain Telemetry Pipeline — Makefile ───────────────────
 #
-# This Makefile is the operational contract for the local digital twin cluster.
-# It proves professional orchestration of multi-container environments and
-# serves as a portable CI/CD entrypoint.
+# Operational contract for the local development cluster and AWS demo run.
+# Proves professional orchestration of multi-container environments.
 #
 # 12-Factor X (Dev/Prod Parity):
-#   Every target here can be replicated in a CI/CD pipeline (GitHub Actions,
-#   Cloud Build, Jenkins) by calling the same make targets with an environment-
-#   specific env file: ENV_FILE=.env.gcp make cluster-up
+#   Every target here can be replicated in CI/CD (GitHub Actions, Cloud Build)
+#   by calling the same make targets with an environment-specific env file:
+#   ENV_FILE=.env.gcp make cluster-up
 #
 # Usage:
 #   make help               → print this menu
-#   make cluster-up         → start the full stack and wait for health
-#   make demo               → run the complete end-to-end pipeline
+#   make cluster-up         → start all local services
+#   make demo               → full end-to-end pipeline simulation
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── Configuration ─────────────────────────────────────────────────────────────
@@ -21,27 +20,24 @@ include $(ENV_FILE)
 export
 PYTHON     := .venv/bin/python
 DBT        := .venv/bin/dbt
-UVICORN    := .venv/bin/uvicorn
 PYTEST     := .venv/bin/pytest
 RUFF       := .venv/bin/ruff
 
-# Pipeline tunables (override on the CLI: make inject-synthetic-data EVENTS=5000)
-EVENTS     ?= 1000
-API_PORT   ?= 8002
-USER_ID    ?=
+# Pipeline tunables (override on CLI: make emit-telemetry EVENTS=5000)
+EVENTS     ?= 500
 SVC        ?=
 
-DBT_DIR := warehouse/dbt/fraud_warehouse
-DBT_FLAGS       := --profiles-dir .
+DBT_DIR    := warehouse/dbt/supply_chain_warehouse
+DBT_FLAGS  := --profiles-dir .
 
 .PHONY: help \
         validate-env \
         cluster-up cluster-down cluster-status cluster-nuke \
         build-airflow \
         seed connector \
-        inject-synthetic-data stream-bronze stream-bronze-once load-bronze \
+        emit-telemetry \
         dbt-run dbt-incremental-run dbt-snapshot dbt-test \
-        load-features api-up score \
+        tf-init tf-apply tf-destroy \
         health recon \
         demo \
         setup install fmt lint test logs ps
@@ -50,40 +46,41 @@ DBT_FLAGS       := --profiles-dir .
 help:
 	@echo ""
 	@echo "  ╔══════════════════════════════════════════════════════════╗"
-	@echo "  ║   Realtime Fraud Feature Store — Cluster Operations     ║"
+	@echo "  ║  Predictive Supply Chain Telemetry Pipeline             ║"
+	@echo "  ║  AWS Kinesis + Databricks + Delta Lake on S3            ║"
 	@echo "  ╚══════════════════════════════════════════════════════════╝"
 	@echo ""
-	@echo "  INFRASTRUCTURE"
+	@echo "  INFRASTRUCTURE (Local Docker)"
 	@echo "    validate-env          Assert all required vars in $(ENV_FILE)"
-	@echo "    cluster-up            Start all services; wait for healthy"
+	@echo "    cluster-up            Start all local services; wait for healthy"
 	@echo "    cluster-down          Graceful stop (volumes preserved)"
 	@echo "    cluster-status        Service health summary"
 	@echo "    cluster-nuke          DESTRUCTIVE: stop + wipe all volumes"
-	@echo "    build-airflow         Build custom Airflow image (bake deps)"
-	@echo "    logs [SVC=<name>]     Tail logs (e.g. SVC=spark-master)"
+	@echo "    logs [SVC=<name>]     Tail logs (e.g. SVC=postgres)"
 	@echo "    ps                    Docker compose ps"
 	@echo ""
+	@echo "  AWS INFRASTRUCTURE (Terraform)"
+	@echo "    tf-init               terraform init"
+	@echo "    tf-apply              Provision S3 bucket + Kinesis stream + IAM"
+	@echo "    tf-destroy            DESTRUCTIVE: tear down all AWS resources"
+	@echo ""
 	@echo "  SETUP (run once per fresh cluster)"
-	@echo "    seed                  Seed Postgres reference tables"
+	@echo "    seed                  Seed Postgres ERP reference tables"
 	@echo "    connector             Register Debezium CDC connector"
 	@echo ""
 	@echo "  PIPELINE"
-	@echo "    inject-synthetic-data Produce N events → Kafka [EVENTS=$(EVENTS)]"
-	@echo "    stream-bronze         Spark structured streaming → MinIO Delta"
-	@echo "    stream-bronze-once    Single batch (CI / backlog drain) [availableNow trigger]"
-	@echo "    load-bronze           Delta Lake (MinIO) → Postgres bronze schema"
-	@echo "    dbt-snapshot          Run dbt snapshot"
+	@echo "    emit-telemetry        Push N machine events → Kinesis [EVENTS=$(EVENTS)]"
+	@echo "    dbt-snapshot          Run dbt snapshot (SCD Type 2)"
 	@echo "    dbt-run               Run dbt snapshot + run + test"
 	@echo "    dbt-incremental-run   Run only incremental models"
 	@echo "    dbt-test              Run dbt tests (JUnit XML output)"
-	@echo "    load-features         Postgres gold → Redis feature cache"
-	@echo "    api-up                Start FastAPI serving layer"
-	@echo "    score [USER_ID=<id>]  Run mock ML scorer against the API"
-	@echo "    demo                  Full end-to-end pipeline simulation"
 	@echo ""
 	@echo "  MONITORING"
-	@echo "    health                Poll /health endpoint"
+	@echo "    health                Check Postgres + Debezium connector health"
 	@echo "    recon                 Bronze/Silver reconciliation report"
+	@echo ""
+	@echo "  DEMO (full end-to-end AWS + Databricks run)"
+	@echo "    demo                  Provision AWS → emit telemetry → Databricks"
 	@echo ""
 	@echo "  DEVELOPMENT"
 	@echo "    setup                 Create .venv + install all deps"
@@ -94,17 +91,14 @@ help:
 	@echo ""
 
 # ── validate-env ──────────────────────────────────────────────────────────────
-# This target is a prerequisite for every pipeline command. It enforces that
-# the operator has a correctly populated env file before any cluster operation.
-# Mirror of a CI/CD pre-flight check.
-REQUIRED_VARS := POSTGRES_PASSWORD MINIO_ACCESS_KEY MINIO_SECRET_KEY \
-                 KAFKA_BOOTSTRAP_SERVERS REDIS_HOST PG_PASSWORD API_KEY
+REQUIRED_VARS := POSTGRES_PASSWORD KINESIS_STREAM_NAME AWS_ACCESS_KEY_ID \
+                 AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION PG_PASSWORD
 
 validate-env:
 	@echo "→ Validating environment: $(ENV_FILE)"
 	@if [ ! -f "$(ENV_FILE)" ]; then \
 		echo "✗ ERROR: $(ENV_FILE) not found."; \
-		echo "  Run: cp .env.local.example .env.local && edit .env.local"; \
+		echo "  Run: cp .env.example .env.local && edit .env.local"; \
 		exit 1; \
 	fi
 	@set -a; . ./$(ENV_FILE); set +a; \
@@ -119,19 +113,40 @@ validate-env:
 	fi
 	@echo "✓ Environment validated: all required variables present."
 
-# ── Infrastructure ────────────────────────────────────────────────────────────
+# ── AWS Infrastructure (Terraform) ───────────────────────────────────────────
+
+tf-init:
+	@echo "→ Initialising Terraform..."
+	cd infra/terraform-aws-freetier && terraform init
+	@echo "✓ Terraform initialised."
+
+tf-apply: tf-init
+	@echo "→ Provisioning AWS infrastructure (S3 + Kinesis + IAM)..."
+	@echo "  This creates real AWS resources. Estimated cost: ~$1/month."
+	cd infra/terraform-aws-freetier && terraform apply
+	@echo "✓ AWS infrastructure provisioned."
+	@echo "  Note the outputs above — you need s3_bucket_name and kinesis_stream_name."
+
+tf-destroy:
+	@echo "⚠ WARNING: This will DESTROY all AWS resources (S3 bucket, Kinesis stream)."
+	@echo "  Press Ctrl+C within 5 seconds to abort..."
+	@sleep 5
+	cd infra/terraform-aws-freetier && terraform destroy
+	@echo "✓ All AWS resources destroyed. Cost stopped."
+
+# ── Infrastructure (Local Docker) ────────────────────────────────────────────
 
 build-airflow:
-	@echo "→ Building custom Airflow image (baking deps — this may take ~2min)..."
-	docker build -f infra/airflow/Dockerfile.airflow -t fraud-airflow:local .
-	@echo "✓ fraud-airflow:local image ready."
+	@echo "→ Building Airflow image..."
+	docker build -f infra/airflow/Dockerfile.airflow -t supply-chain-airflow:local .
+	@echo "✓ supply-chain-airflow:local image ready."
 
 cluster-up: validate-env build-airflow
-	@echo "→ Starting fraud_vpc cluster..."
+	@echo "→ Starting supply_chain_vpc cluster..."
 	@docker compose --env-file $(ENV_FILE) up -d > /dev/null 2>&1
 	@echo "→ Waiting for services to become healthy..."
-	@echo "  (Kafka, Postgres, Redis, MinIO, Spark, Airflow)"
-	@for svc in kafka postgres redis minio spark-master kafka-connect; do \
+	@echo "  (Postgres, Debezium/Kafka Connect)"
+	@for svc in postgres kafka-connect; do \
 		echo -n "  Waiting for $$svc... "; \
 		attempts=0; \
 		while [ "$$(docker inspect --format='{{.State.Health.Status}}' $$svc 2>/dev/null)" != "healthy" ]; do \
@@ -147,33 +162,25 @@ cluster-up: validate-env build-airflow
 	done
 	@echo ""
 	@echo "  ╔═══════════════════════════════════════════════════╗"
-	@echo "  ║  fraud_vpc cluster is UP                         ║"
+	@echo "  ║  supply_chain_vpc cluster is UP                  ║"
 	@echo "  ╠═══════════════════════════════════════════════════╣"
-	@echo "  ║  Kafka UI:      http://localhost:8080            ║"
-	@echo "  ║  Spark Master:  http://localhost:8088            ║"
-	@echo "  ║  Spark Worker:  http://localhost:8081            ║"
-	@echo "  ║  Airflow:       http://localhost:8082            ║"
-	@echo "  ║  MinIO:         http://localhost:9001            ║"
+	@echo "  ║  Postgres:      localhost:5432                   ║"
 	@echo "  ║  Kafka Connect: http://localhost:8083            ║"
 	@echo "  ╠═══════════════════════════════════════════════════╣"
 	@echo "  ║  Next: make seed && make connector               ║"
 	@echo "  ╚═══════════════════════════════════════════════════╝"
 
 cluster-down:
-	@echo "→ Stopping fraud_vpc cluster (volumes preserved)..."
+	@echo "→ Stopping supply_chain_vpc cluster (volumes preserved)..."
 	docker compose down
 	@echo "✓ Cluster stopped."
 
 cluster-status:
 	@echo "→ Cluster service health:"
 	@docker compose ps
-	@echo ""
-	@echo "→ Network:"
-	@docker network inspect fraud-pipeline_fraud_vpc --format '{{.Name}}: {{len .Containers}} containers' 2>/dev/null || echo "  fraud_vpc not found (cluster is down)"
 
 cluster-nuke: validate-env
-	@echo "⚠ WARNING: This will DESTROY all volumes (Kafka offsets, Postgres data,"
-	@echo "  MinIO objects, Redis cache). This action is irreversible."
+	@echo "⚠ WARNING: This will DESTROY all volumes (Postgres data, Debezium offsets)."
 	@echo "  Press Ctrl+C within 5 seconds to abort..."
 	@sleep 5
 	docker compose down -v
@@ -192,45 +199,28 @@ ps:
 # ── Setup (run once per fresh cluster) ───────────────────────────────────────
 
 seed: validate-env
-	@echo "→ Seeding Postgres reference tables (users, merchants)..."
-	$(PYTHON) -m ingestion.transaction_generator.src.seed_reference
+	@echo "→ Seeding Postgres ERP reference tables (machines, suppliers, inventory_levels)..."
+	$(PYTHON) -m ingestion.telemetry_generator.src.seed_reference
 	@echo "✓ Reference tables seeded."
 
 connector: validate-env
 	@echo "→ Registering Debezium Postgres CDC connector..."
 	CONNECT_URL=$$(grep CONNECT_URL $(ENV_FILE) | cut -d= -f2) \
 	./infra/debezium/register-connector.sh
-	@echo "✓ Debezium connector registered."
+	@echo "✓ Debezium connector registered. CDC events now flowing to Kafka."
 
 # ── Pipeline ──────────────────────────────────────────────────────────────────
 
-inject-synthetic-data: validate-env
-	@echo "→ Injecting $(EVENTS) synthetic transactions → Kafka..."
-	@echo "  Topic: transactions.raw | Bootstrap: $$(grep KAFKA_BOOTSTRAP $(ENV_FILE) | cut -d= -f2)"
-	$(PYTHON) -m ingestion.transaction_generator.src.run --max-events $(EVENTS) --firehose
-	@echo "✓ $(EVENTS) events published."
-
-stream-bronze: validate-env
-	@echo "→ Starting Spark Structured Streaming job..."
-	@echo "  Source: transactions.raw (Kafka)"
-	@echo "  Sink:   s3a://bronze/transactions_v2/ (MinIO Delta Lake)"
-	@echo "  Master: $$(grep SPARK_MASTER_URL $(ENV_FILE) | cut -d= -f2)"
-	@echo "  Press Ctrl+C to stop the streaming job."
-	$(PYTHON) -m streaming.spark.src.bronze_ingest
-
-stream-bronze-once: validate-env
-	@echo "→ Running Spark bronze ingestion (availableNow trigger — processes backlog once)..."
-	$(PYTHON) -m streaming.spark.src.bronze_ingest --once || \
-		(echo "✗ Bronze ingestion FAILED — check Spark logs"; exit 1)
-	@echo "✓ Bronze ingestion complete."
-
-load-bronze: validate-env
-	@echo "→ Loading Bronze Delta Lake (MinIO) → Postgres bronze schema..."
-	$(PYTHON) -m warehouse.loaders.bronze_loader
-	@echo "✓ Bronze load complete."
+emit-telemetry: validate-env
+	@echo "→ Emitting $(EVENTS) machine telemetry events → Amazon Kinesis..."
+	@echo "  Stream: $$(grep KINESIS_STREAM_NAME $(ENV_FILE) | cut -d= -f2)"
+	@echo "  Region: $$(grep AWS_DEFAULT_REGION $(ENV_FILE) | cut -d= -f2)"
+	$(PYTHON) -m ingestion.telemetry_generator.src.run --events $(EVENTS) --firehose
+	@echo "✓ $(EVENTS) telemetry events published to Kinesis."
+	@echo "  Next: run notebooks 01 → 02 → 03 in Databricks."
 
 dbt-snapshot: validate-env
-	@echo "→ Running dbt snapshot..."
+	@echo "→ Running dbt snapshot (SCD Type 2 on machines + inventory)..."
 	cd $(DBT_DIR) && ../../../$(DBT) snapshot $(DBT_FLAGS)
 
 dbt-run: validate-env
@@ -252,67 +242,48 @@ dbt-test: validate-env
 		2>&1 | tee /tmp/dbt-test-output.txt
 	@echo "✓ dbt tests complete."
 
-load-features: validate-env
-	@echo "→ Loading features: Postgres gold → Redis cache..."
-	$(PYTHON) -m feature_store.src.loader
-	@echo "✓ Feature cache populated."
-
-api-up: validate-env
-	@echo "→ Starting Feature Serving API on http://localhost:$(API_PORT)"
-	@echo "  Docs:   http://localhost:$(API_PORT)/docs"
-	@echo "  Health: http://localhost:$(API_PORT)/health"
-	@echo "  Auth:   X-API-Key header (see API_KEY in $(ENV_FILE))"
-	$(UVICORN) feature_store.src.api:app --reload --port $(API_PORT) --env-file $(ENV_FILE)
-
-score: validate-env
-	@echo "→ Running mock ML scorer..."
-	@if [ -n "$(USER_ID)" ]; then \
-		$(PYTHON) -m feature_store.src.mock_ml_scorer --user_id $(USER_ID); \
-	else \
-		$(PYTHON) -m feature_store.src.mock_ml_scorer; \
-	fi
-
 # ── Monitoring ────────────────────────────────────────────────────────────────
 
 health:
-	@echo "→ Feature Store API health:"
-	@curl -s localhost:$(API_PORT)/health | $(PYTHON) -m json.tool || \
-		echo "  ✗ API is not running. Start with: make api-up"
+	@echo "→ Postgres health:"
+	@docker compose exec postgres pg_isready -U supply_chain_admin || \
+		echo "  ✗ Postgres not running. Start with: make cluster-up"
+	@echo "→ Debezium connector status:"
+	@curl -s http://localhost:8083/connectors/supply-chain-cdc/status 2>/dev/null | \
+		$(PYTHON) -m json.tool || echo "  ✗ Kafka Connect not running."
 
 recon:
 	@echo "→ Bronze/Silver reconciliation report:"
-	@docker compose exec postgres psql -U fraud_admin -d fraud_reference -c \
-		"SELECT recon_status, bronze_total, silver_total, unaccounted_records \
-		 FROM silver_data_quality.recon_bronze_silver;" 2>/dev/null || \
+	@docker compose exec postgres psql -U supply_chain_admin -d supply_chain_db -c \
+		"SELECT * FROM data_quality.recon_bronze_silver;" 2>/dev/null || \
 		echo "  Postgres container not running. Start with: make cluster-up"
 
-# ── Demo — End-to-End Pipeline ────────────────────────────────────────────────
-# Runs the full pipeline in sequence. Useful for a live demonstration or CI.
+# ── Demo — Full End-to-End Pipeline ──────────────────────────────────────────
 demo: validate-env
 	@echo ""
 	@echo "  ╔══════════════════════════════════════════════════════════╗"
-	@echo "  ║   FRAUD FEATURE STORE — End-to-End Demo                ║"
+	@echo "  ║  Supply Chain Telemetry Pipeline — Demo Run             ║"
+	@echo "  ║  AWS Kinesis + Databricks + Delta Lake on S3            ║"
 	@echo "  ╚══════════════════════════════════════════════════════════╝"
 	@echo ""
-	@echo "  [1/6] Injecting $(EVENTS) synthetic transactions..."
-	$(MAKE) inject-synthetic-data EVENTS=$(EVENTS)
+	@echo "  [1/4] Provisioning AWS infrastructure (S3 + Kinesis)..."
+	$(MAKE) tf-apply
 	@echo ""
-	@echo "  [2/6] Running Spark bronze ingestion (single batch)..."
-	$(MAKE) stream-bronze-once
+	@echo "  [2/4] Seeding local Postgres ERP reference tables..."
+	$(MAKE) seed
 	@echo ""
-	@echo "  [3/6] Loading bronze layer to Postgres warehouse..."
-	$(MAKE) load-bronze
+	@echo "  [3/4] Emitting $(EVENTS) telemetry events → Amazon Kinesis..."
+	$(MAKE) emit-telemetry EVENTS=$(EVENTS)
 	@echo ""
-	@echo "  [4/6] Running dbt transformations (silver + gold)..."
-	$(MAKE) dbt-run
+	@echo "  [4/4] Pipeline running! Open Databricks and run:"
+	@echo "        notebooks/01_bronze_autoloader.py"
+	@echo "        notebooks/02_silver_structuring.py"
+	@echo "        notebooks/03_gold_supply_risk.py"
 	@echo ""
-	@echo "  [5/6] Loading features to Redis cache..."
-	$(MAKE) load-features
+	@echo "  After taking screenshots, tear down AWS resources with:"
+	@echo "        make tf-destroy"
 	@echo ""
-	@echo "  [6/6] Pipeline complete! Start the API to serve features:"
-	@echo "        make api-up"
-	@echo ""
-	@echo "  ✓ Demo complete."
+	@echo "  ✓ Demo pipeline complete."
 
 # ── Development ───────────────────────────────────────────────────────────────
 
@@ -321,11 +292,11 @@ setup:
 	python3.11 -m venv --clear .venv
 	.venv/bin/pip install --upgrade pip
 	.venv/bin/pip install -e ".[dev]"
-	.venv/bin/pip install "dbt-core==1.8.*" "dbt-postgres==1.8.2"
+	.venv/bin/pip install "dbt-core==1.8.*" "dbt-databricks==1.8.*" "boto3>=1.34"
 	@echo ""
 	@echo "✓ Setup complete."
-	@echo "  Activate your environment: source .venv/bin/activate"
-	@echo "  Next: cp .env.local.example .env.local && make cluster-up"
+	@echo "  Activate: source .venv/bin/activate"
+	@echo "  Next: cp .env.example .env.local && edit .env.local && make tf-apply"
 
 install:
 	.venv/bin/pip install -e ".[dev]"
