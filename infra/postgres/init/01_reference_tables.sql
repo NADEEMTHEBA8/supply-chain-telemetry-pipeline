@@ -1,10 +1,10 @@
 -- Supply Chain Reference Tables
--- Replaces the fraud pipeline's users/merchants tables.
+-- Drops any legacy tables and creates the supply chain schema.
 -- These are the CDC source tables — Debezium tails the WAL and publishes
 -- changes to Kafka topics that flow into the Bronze S3 layer.
 -- In production, AWS DMS replicates this ERP data directly.
 
--- Drop old fraud tables if they exist
+-- Drop legacy tables if migrating from an older schema
 DROP TABLE IF EXISTS public.merchants CASCADE;
 DROP TABLE IF EXISTS public.users CASCADE;
 

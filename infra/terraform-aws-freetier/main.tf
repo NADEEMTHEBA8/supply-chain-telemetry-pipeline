@@ -25,8 +25,8 @@ variable "project_name" {
 
 # -----------------------------------------------------------------------------
 # S3 — Delta Lakehouse Storage (Bronze / Silver / Gold)
-# All Databricks Delta tables land here. Replaces the self-hosted MinIO
-# instance in the original fraud pipeline.
+# All Databricks Delta tables land here. Stores all Databricks Delta tables.
+# Terraform provisions the bucket; Databricks writes directly.
 # -----------------------------------------------------------------------------
 resource "aws_s3_bucket" "lakehouse" {
   bucket = "${var.project_name}-lake"

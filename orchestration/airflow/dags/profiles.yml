@@ -1,24 +1,25 @@
-# dbt profile for the Airflow container — 12-Factor III compliant.
+# dbt connection profiles for the Supply Chain Warehouse
 #
-# Inside the fraud_vpc Docker network, Postgres is reachable at:
-#   host: postgres (Docker DNS)   port: 5432
-#
-# These values are injected by docker-compose.yml as environment variables
-# into the airflow container, so this profiles.yml reads them identically
-# to how it would in Cloud Composer or MWAA.
-#
-# This file is mounted at /opt/airflow/dags/profiles.yml inside the container.
-# The DAG references it via DBT_PROFILES_DIR=/opt/airflow/dags.
+# Used by: dbt CLI, Airflow dbt operators, and Databricks dbt integration
+# Target: supply_chain_db PostgreSQL (local ERP reference data)
+#         In production, dbt-databricks targets the Databricks SQL Warehouse directly.
 
-fraud_warehouse:
-  target: "{{ env_var('DBT_TARGET', 'dev') }}"
+supply_chain_warehouse:
+  target: dev
   outputs:
     dev:
       type: postgres
-      host: "{{ env_var('PG_HOST', 'postgres') }}"
+      host: "{{ env_var('PG_HOST', 'localhost') }}"
       port: "{{ env_var('PG_PORT', '5432') | int }}"
-      user: "{{ env_var('PG_USER', 'fraud_admin') }}"
-      password: "{{ env_var('PG_PASSWORD') }}"
-      dbname: "{{ env_var('PG_DATABASE', 'fraud_reference') }}"
-      schema: "{{ env_var('DBT_SCHEMA', 'silver') }}"
-      threads: "{{ env_var('DBT_THREADS', '2') | int }}"
+      user: "{{ env_var('PG_USER', 'supply_chain_admin') }}"
+      password: "{{ env_var('PG_PASSWORD', 'changeme_local_only') }}"
+      dbname: "{{ env_var('PG_DATABASE', 'supply_chain_db') }}"
+      schema: silver
+      threads: 4
+    prod:
+      type: databricks
+      host: "{{ env_var('DATABRICKS_HOST') }}"
+      http_path: "{{ env_var('DATABRICKS_HTTP_PATH') }}"
+      token: "{{ env_var('DATABRICKS_TOKEN') }}"
+      schema: gold
+      threads: 8

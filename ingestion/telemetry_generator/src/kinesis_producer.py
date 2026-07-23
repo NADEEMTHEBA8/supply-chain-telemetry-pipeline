@@ -1,7 +1,7 @@
 """
 Kinesis producer for machine telemetry events.
 
-Replaces the Kafka producer from the fraud pipeline.
+Publishes machine telemetry events to Amazon Kinesis Data Streams.
 Pushes MachineEvent JSON payloads to Amazon Kinesis Data Streams.
 
 Production equivalence: In TE Connectivity's architecture, this is the

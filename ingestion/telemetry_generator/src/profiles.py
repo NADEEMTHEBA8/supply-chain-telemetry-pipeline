@@ -4,7 +4,7 @@ Machine and inventory profile factories.
 Generates deterministic pools of machines (plants, types) and suppliers
 used by the TelemetryGenerator. Keeping the seed fixed means the
 inventory_level CDC values in PostgreSQL stay consistent with what
-the generator emits — same pattern as the original fraud project.
+the generator emits — same deterministic seeding pattern used across all pipeline layers.
 """
 
 from __future__ import annotations

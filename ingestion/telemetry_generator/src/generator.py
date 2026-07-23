@@ -42,7 +42,7 @@ class TelemetryGenerator:
 
     Temperature and vibration readings follow a lognormal distribution centred
     on each machine's baseline, with injected spikes to simulate fault conditions.
-    This is the supply chain equivalent of the fraud pipeline's TransactionGenerator.
+    Generates realistic machine sensor data for the TE Connectivity supply chain platform.
 
     Usage:
         factory = ProfileFactory(seed=42)
