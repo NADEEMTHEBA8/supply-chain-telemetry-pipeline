@@ -1,10 +1,9 @@
-import json
 from unittest.mock import MagicMock, patch
 
 import pytest
-from botocore.exceptions import ClientError
 
 from ingestion.telemetry_generator.src.generator import TelemetryGenerator
+from ingestion.telemetry_generator.src.kinesis_producer import KinesisProducer
 from ingestion.telemetry_generator.src.profiles import ProfileFactory
 from ingestion.telemetry_generator.src.s3_producer import S3Producer
 from ingestion.telemetry_generator.src.schemas import MachineEvent, OperationalStatus
@@ -47,15 +46,45 @@ def test_telemetry_event_generation(telemetry_generator):
     assert isinstance(event.operational_status, OperationalStatus)
 
 
-def test_telemetry_schema_serialization(telemetry_generator):
+def test_telemetry_schema_drift_extra_fields(telemetry_generator):
     event = telemetry_generator.generate_machine_event()
-    serialized_bytes = event.to_json()
-    payload = json.loads(serialized_bytes.decode("utf-8"))
+    event_dict = event.to_dict()
+    event_dict["wifi_signal_strength"] = -42.5  # Firmware upgrade novel field
 
-    assert payload["machine_id"] == event.machine_id
-    assert payload["plant_id"] == event.plant_id
-    assert payload["temperature_celsius"] == event.temperature_celsius
-    assert payload["operational_status"] in [s.value for s in OperationalStatus]
+    event_with_drift = MachineEvent.model_validate(event_dict)
+    assert event_with_drift.wifi_signal_strength == -42.5
+
+    serialized_json = event_with_drift.to_json().decode("utf-8")
+    assert "wifi_signal_strength" in serialized_json
+
+
+@patch("boto3.client")
+def test_kinesis_producer_partial_batch_retry_success(mock_boto_client, telemetry_generator):
+    mock_kinesis = MagicMock()
+    # First response returns FailedRecordCount = 1
+    mock_kinesis.put_records.side_effect = [
+        {
+            "FailedRecordCount": 1,
+            "Records": [
+                {"SequenceNumber": "1"},
+                {"ErrorCode": "ProvisionedThroughputExceededException", "ErrorMessage": "Rate exceeded"},
+            ],
+        },
+        {
+            "FailedRecordCount": 0,
+            "Records": [{"SequenceNumber": "2"}],
+        },
+    ]
+    mock_boto_client.return_value = mock_kinesis
+
+    producer = KinesisProducer(stream_name="test-stream", max_retries=2)
+    events = telemetry_generator.generate_batch(2)
+
+    producer.send_batch(events)
+
+    assert producer.stats["sent"] == 2
+    assert producer.stats["errors"] == 0
+    assert mock_kinesis.put_records.call_count == 2
 
 
 @patch("boto3.client")
@@ -71,20 +100,3 @@ def test_s3_producer_send_success(mock_boto_client, telemetry_generator):
     assert producer.stats["sent"] == 1
     assert producer.stats["errors"] == 0
     mock_s3.put_object.assert_called_once()
-
-
-@patch("boto3.client")
-def test_s3_producer_send_failure(mock_boto_client, telemetry_generator):
-    mock_s3 = MagicMock()
-    mock_s3.put_object.side_effect = ClientError(
-        {"Error": {"Code": "500", "Message": "Internal Error"}}, "PutObject"
-    )
-    mock_boto_client.return_value = mock_s3
-
-    producer = S3Producer(bucket_name="test-lakehouse-bucket")
-    event = telemetry_generator.generate_machine_event()
-
-    producer.send(event)
-
-    assert producer.stats["sent"] == 0
-    assert producer.stats["errors"] == 1

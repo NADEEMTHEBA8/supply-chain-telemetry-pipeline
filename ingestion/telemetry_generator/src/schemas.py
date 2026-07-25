@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import json
-from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class OperationalStatus(StrEnum):
@@ -21,9 +21,15 @@ class TransitStatus(StrEnum):
     DELAYED = "DELAYED"
 
 
-@dataclass
-class MachineEvent:
-    """Domain model for machine sensor telemetry emitted on factory floors."""
+class MachineEvent(BaseModel):
+    """Domain model for machine sensor telemetry emitted on factory floors.
+
+    Configured with extra='allow' so novel firmware fields (e.g. ambient_humidity)
+    pass through serialization to Kinesis/S3, delegating schema evolution to
+    downstream Databricks Auto Loader rescue mode.
+    """
+
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
 
     machine_id: str
     plant_id: str
@@ -37,26 +43,19 @@ class MachineEvent:
     power_consumption_kw: float = 0.0
 
     def to_dict(self) -> dict:
-        return {
-            "machine_id": self.machine_id,
-            "plant_id": self.plant_id,
-            "event_timestamp": self.event_timestamp.isoformat(),
-            "temperature_celsius": self.temperature_celsius,
-            "vibration_hz": self.vibration_hz,
-            "pressure_bar": self.pressure_bar,
-            "operational_status": self.operational_status.value,
-            "error_code": self.error_code,
-            "rpm": self.rpm,
-            "power_consumption_kw": self.power_consumption_kw,
-        }
+        data = self.model_dump()
+        data["event_timestamp"] = self.event_timestamp.isoformat()
+        data["operational_status"] = self.operational_status.value
+        return data
 
     def to_json(self) -> bytes:
-        return json.dumps(self.to_dict()).encode("utf-8")
+        return self.model_dump_json().encode("utf-8")
 
 
-@dataclass
-class InventoryEvent:
+class InventoryEvent(BaseModel):
     """CDC event payload representing ERP inventory balances."""
+
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
 
     part_id: str
     supplier_id: str
@@ -66,17 +65,14 @@ class InventoryEvent:
     snapshot_date: datetime
     reorder_point: int = 100
     safety_stock: int = 50
-    unit_cost: Decimal = field(default_factory=lambda: Decimal("0.00"))
+    unit_cost: Decimal = Field(default_factory=lambda: Decimal("0.00"))
 
     def to_dict(self) -> dict:
-        return {
-            "part_id": self.part_id,
-            "supplier_id": self.supplier_id,
-            "warehouse_id": self.warehouse_id,
-            "stock_level": self.stock_level,
-            "transit_status": self.transit_status.value,
-            "snapshot_date": self.snapshot_date.isoformat(),
-            "reorder_point": self.reorder_point,
-            "safety_stock": self.safety_stock,
-            "unit_cost": str(self.unit_cost),
-        }
+        data = self.model_dump()
+        data["snapshot_date"] = self.snapshot_date.isoformat()
+        data["transit_status"] = self.transit_status.value
+        data["unit_cost"] = str(self.unit_cost)
+        return data
+
+    def to_json(self) -> bytes:
+        return self.model_dump_json().encode("utf-8")
