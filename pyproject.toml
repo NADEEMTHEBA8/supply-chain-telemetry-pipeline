@@ -33,9 +33,8 @@ dev = [
     "mypy>=1.8.0",
 ]
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["config*", "ingestion*"]
+[tool.setuptools]
+packages = ["config", "ingestion", "ingestion.telemetry_generator", "ingestion.telemetry_generator.src"]
 
 [tool.ruff]
 line-length = 120
