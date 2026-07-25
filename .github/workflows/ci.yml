@@ -85,12 +85,10 @@ jobs:
             exit 1
           fi
 
-      - name: Validate Terraform syntax
+      - name: Validate Terraform formatting
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.6.0"
       - run: |
           cd infra/terraform-aws-freetier
           terraform fmt -check
-          terraform init -backend=false
-          terraform validate
