@@ -91,6 +91,5 @@ jobs:
           terraform_version: "1.6.0"
       - run: |
           cd infra/terraform-aws-freetier
-          rm -f .terraform.lock.hcl
-          terraform init -backend=false
-          terraform validate
+          terraform fmt -check
+          terraform validate -backend=false
