@@ -92,4 +92,5 @@ jobs:
       - run: |
           cd infra/terraform-aws-freetier
           terraform fmt -check
-          terraform validate -backend=false
+          terraform init -backend=false
+          terraform validate
