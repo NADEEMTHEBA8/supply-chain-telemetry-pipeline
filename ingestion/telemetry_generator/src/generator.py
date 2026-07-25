@@ -13,7 +13,7 @@ downstream Gold model (gold_supply_risk) is designed to detect.
 from __future__ import annotations
 
 import random
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 
 from ingestion.telemetry_generator.src.profiles import MachineProfile, SupplierProfile
 from ingestion.telemetry_generator.src.schemas import (

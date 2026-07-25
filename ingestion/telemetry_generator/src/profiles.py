@@ -11,9 +11,8 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-
 
 PLANT_IDS = [
     "PLANT_MX_01",  # Monterrey, Mexico — connectors

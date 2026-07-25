@@ -1,16 +1,12 @@
 """
 Telemetry generator runner.
 
-Publishes synthetic factory machine telemetry events to Amazon Kinesis
-Data Streams. Simulates the IoT sensor stream that feeds TE Connectivity's
+Publishes synthetic factory machine telemetry events to AWS S3.
+Simulates the IoT sensor stream that feeds TE Connectivity's
 supply chain telemetry platform in production.
 
-12-Factor III compliance: AWS region and stream name are injected via
-environment variables. No hardcoded configuration.
-
 Usage:
-    python -m ingestion.telemetry_generator.src.run --events 500
-    python -m ingestion.telemetry_generator.src.run --rate 50 --firehose
+    .venv/bin/python -m ingestion.telemetry_generator.src.run --events 500
 """
 
 from __future__ import annotations
@@ -20,8 +16,8 @@ import os
 import time
 
 from ingestion.telemetry_generator.src.generator import TelemetryGenerator
-from ingestion.telemetry_generator.src.kinesis_producer import KinesisProducer
 from ingestion.telemetry_generator.src.profiles import ProfileFactory
+from ingestion.telemetry_generator.src.s3_producer import S3Producer
 from ingestion.telemetry_generator.src.seed_reference import (
     NUM_MACHINES,
     NUM_SUPPLIERS,
@@ -29,7 +25,7 @@ from ingestion.telemetry_generator.src.seed_reference import (
 )
 
 PRINT_EVERY = 50
-KINESIS_STREAM = os.environ.get("KINESIS_STREAM_NAME", "te-machine-telemetry")
+S3_BUCKET = os.environ.get("S3_BUCKET_NAME", "te-supply-chain-telemetry-lake")
 AWS_REGION = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
 
 
@@ -39,8 +35,8 @@ def main() -> None:
                         help="Target events per second (default: 10)")
     parser.add_argument("--firehose", action="store_true",
                         help="Aggressively batch events without sleep")
-    parser.add_argument("--events", type=int, default=0,
-                        help="Stop after this many events (0 = unlimited)")
+    parser.add_argument("--events", type=int, default=100,
+                        help="Stop after this many events")
     args = parser.parse_args()
 
     print(f"Initialising {NUM_MACHINES} machines / {NUM_SUPPLIERS} suppliers (seed={SEED})")
@@ -49,13 +45,10 @@ def main() -> None:
     suppliers = factory.make_suppliers(NUM_SUPPLIERS)
 
     gen = TelemetryGenerator(machines=machines, suppliers=suppliers, seed=SEED)
-    producer = KinesisProducer(stream_name=KINESIS_STREAM, region_name=AWS_REGION)
+    producer = S3Producer(bucket_name=S3_BUCKET, region_name=AWS_REGION)
 
-    mode = "FIREHOSE" if args.firehose else f"~{args.rate} events/s"
-    print(f"Publishing to Kinesis stream '{KINESIS_STREAM}' [{AWS_REGION}] — {mode}")
-    print("Press Ctrl+C to stop.\n")
+    print(f"Publishing {args.events} events directly to AWS S3 bucket '{S3_BUCKET}' [{AWS_REGION}]...")
 
-    delay = 1.0 / args.rate if args.rate > 0 else 0
     total_sent = 0
     start_time = time.time()
 
@@ -77,9 +70,6 @@ def main() -> None:
                     f"errors={producer.stats['errors']}"
                 )
 
-            if not args.firehose and delay > 0:
-                time.sleep(delay)
-
     except KeyboardInterrupt:
         pass
     finally:
@@ -87,7 +77,7 @@ def main() -> None:
         stats = producer.stats
         actual_rate = stats["sent"] / elapsed if elapsed > 0 else 0
         print(
-            f"\nStopped. sent={stats['sent']}  "
+            f"\nFinished. sent={stats['sent']}  "
             f"errors={stats['errors']}  "
             f"duration={elapsed:.1f}s  "
             f"avg_rate={actual_rate:.1f}/s"

@@ -1,65 +1,8 @@
-[build-system]
-requires = ["setuptools>=68.0"]
-build-backend = "setuptools.build_meta"
-
-[project]
-name = "realtime-fraud-feature-store"
-version = "0.1.0"
-description = "Local event-driven fraud analytics prototype with a Redis-backed feature store"
-authors = [
-    {name = "Nadeem Theba", email = "nadeemtheba8@gmail.com"}
-]
-requires-python = ">=3.11,<3.12"
-
-dependencies = [
-    "pydantic>=2.6.0",
-    "pydantic-settings>=2.2.0",
-    "faker>=24.0.0",
-    "kafka-python>=2.0.2",
-    "python-dotenv>=1.0.0",
-    "pyspark==3.5.1",
-    "psycopg2-binary>=2.9.0",
-    "redis>=5.0.0",
-    "fastapi>=0.110.0",
-    "uvicorn[standard]>=0.29.0",
-    "delta-spark~=3.1.0",
-    "pandas>=2.0.0",
-    "pyarrow>=14.0.0",
-    "python-json-logger>=2.0.7",
-    "requests>=2.31.0",
-]
-
-[project.optional-dependencies]
-dev = [
-    "pytest>=8.0.0",
-    "pytest-cov>=4.1.0",
-    "ruff>=0.3.0",
-    "mypy>=1.8.0",
-]
-
-# dbt-postgres is installed separately (CLI tool), pinned to 1.8.x to match
-# the Airflow container: pip install dbt-postgres==1.8.2
-
-[tool.setuptools]
-# Packages are run as `python -m <package>` from the repo root.
-# The `config` package must be explicitly listed so editable installs
-# expose it on PYTHONPATH.
-packages = ["config"]
-
 [tool.ruff]
-line-length = 100
+line-length = 120
 target-version = "py311"
+extend-exclude = ["notebooks"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "RUF"]
-ignore = ["B008", "B905"]
-
-[tool.pytest.ini_options]
-testpaths = ["ingestion", "streaming", "feature_store", "orchestration"]
-python_files = "test_*.py"
-pythonpath = "."
-
-[tool.mypy]
-python_version = "3.11"
-strict = false
-ignore_missing_imports = true
+ignore = ["B008", "B905", "N812"]

@@ -1,27 +1,20 @@
-"""
-Telemetry data schemas for the Supply Chain pipeline.
-
-Defines the MachineEvent and InventoryEvent dataclasses that mirror
-the data model expected by TE Connectivity's supply chain intelligence platform
-and the Amazon Connect Decisions Canonical Data Model (CDM).
-"""
-
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
-from enum import Enum
+from enum import StrEnum
 
 
-class OperationalStatus(str, Enum):
+class OperationalStatus(StrEnum):
     RUNNING = "RUNNING"
     IDLE = "IDLE"
     FAULT = "FAULT"
     MAINTENANCE = "MAINTENANCE"
 
 
-class TransitStatus(str, Enum):
+class TransitStatus(StrEnum):
     IN_TRANSIT = "IN_TRANSIT"
     AT_WAREHOUSE = "AT_WAREHOUSE"
     DELIVERED = "DELIVERED"
@@ -30,11 +23,7 @@ class TransitStatus(str, Enum):
 
 @dataclass
 class MachineEvent:
-    """
-    Represents a single telemetry reading from a factory floor machine.
-    Maps to the 'site' and 'product' entities in the Amazon Connect Decisions CDM.
-    Published to Amazon Kinesis Data Streams at ~15,000 events/second in production.
-    """
+    """Domain model for machine sensor telemetry emitted on factory floors."""
 
     machine_id: str
     plant_id: str
@@ -61,14 +50,13 @@ class MachineEvent:
             "power_consumption_kw": self.power_consumption_kw,
         }
 
+    def to_json(self) -> bytes:
+        return json.dumps(self.to_dict()).encode("utf-8")
+
 
 @dataclass
 class InventoryEvent:
-    """
-    Represents a CDC snapshot of inventory levels from the ERP system.
-    Captured via Debezium CDC from PostgreSQL (simulating AWS DMS in production).
-    Maps directly to the 'inventory_level' entity in the Amazon Connect Decisions CDM.
-    """
+    """CDC event payload representing ERP inventory balances."""
 
     part_id: str
     supplier_id: str
