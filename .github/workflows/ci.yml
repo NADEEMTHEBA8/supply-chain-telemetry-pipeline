@@ -7,7 +7,6 @@ on:
     branches: [ main, master ]
 
 jobs:
-  # ─── Lint + Unit Tests ─────────────────────────────────────────────────────
   lint-and-test:
     runs-on: ubuntu-latest
 
@@ -29,7 +28,6 @@ jobs:
         run: ruff check .
 
       - name: Validate config module imports
-        # Ensures pydantic-settings loads AppSettings with supply chain config
         run: |
           python -c "from config.settings import settings; print('AppSettings OK — stream:', settings.kinesis_stream_name)"
           python -c "from config.logging_config import configure_logging; print('logging_config OK')"
@@ -37,7 +35,6 @@ jobs:
       - name: Run tests
         run: pytest -v --tb=short
 
-  # ─── Infrastructure Validation ─────────────────────────────────────────────
   infra-validate:
     runs-on: ubuntu-latest
 
@@ -69,7 +66,7 @@ jobs:
           )
           MISSING=""
           for var in "${REQUIRED_VARS[@]}"; do
-            if ! grep -q "^${var}=" .env.example; then
+            if !grep -q "^${var}=" .env.example; then
               MISSING="${MISSING} ${var}"
             fi
           done
@@ -94,5 +91,6 @@ jobs:
           terraform_version: "1.6.0"
       - run: |
           cd infra/terraform-aws-freetier
+          rm -f .terraform.lock.hcl
           terraform init -backend=false
           terraform validate
