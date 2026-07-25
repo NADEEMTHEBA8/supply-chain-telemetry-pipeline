@@ -1,10 +1,9 @@
 """
 Machine and inventory profile factories.
 
-Generates deterministic pools of machines (plants, types) and suppliers
-used by the TelemetryGenerator. Keeping the seed fixed means the
-inventory_level CDC values in PostgreSQL stay consistent with what
-the generator emits — same deterministic seeding pattern used across all pipeline layers.
+Generates deterministic pools of factory machines and component suppliers.
+Deterministic seeding guarantees foreign key alignment between PostgreSQL ERP reference
+tables and streaming telemetry payloads.
 """
 
 from __future__ import annotations
@@ -15,11 +14,11 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 PLANT_IDS = [
-    "PLANT_MX_01",  # Monterrey, Mexico — connectors
-    "PLANT_DE_02",  # Bensheim, Germany — sensors
-    "PLANT_CN_03",  # Shenzhen, China — cable assemblies
-    "PLANT_IN_04",  # Pune, India — industrial components
-    "PLANT_US_05",  # Winston-Salem, US — aerospace
+    "PLANT_MX_01",
+    "PLANT_DE_02",
+    "PLANT_CN_03",
+    "PLANT_IN_04",
+    "PLANT_US_05",
 ]
 
 MACHINE_TYPES = [
@@ -39,8 +38,8 @@ class MachineProfile:
     plant_id: str
     machine_type: str
     installed_at: datetime
-    baseline_temp: float      # normal operating temperature
-    baseline_vibration: float # normal vibration frequency
+    baseline_temp: float
+    baseline_vibration: float
 
 
 @dataclass
@@ -53,17 +52,14 @@ class SupplierProfile:
 
 
 class ProfileFactory:
-    """
-    Deterministic factory — same seed always produces the same machines
-    and suppliers so FK references stay consistent across the pipeline.
-    """
+    """Deterministic profile factory for consistent multi-tier testing."""
 
     def __init__(self, seed: int = 42) -> None:
         self._rng = random.Random(seed)
 
-    def make_machines(self, n: int) -> list[MachineProfile]:
+    def make_machines(self, count: int) -> list[MachineProfile]:
         machines = []
-        for i in range(n):
+        for i in range(count):
             plant = self._rng.choice(PLANT_IDS)
             mtype = self._rng.choice(MACHINE_TYPES)
             machines.append(
@@ -80,9 +76,9 @@ class ProfileFactory:
             )
         return machines
 
-    def make_suppliers(self, n: int) -> list[SupplierProfile]:
+    def make_suppliers(self, count: int) -> list[SupplierProfile]:
         suppliers = []
-        for i in range(n):
+        for i in range(count):
             prefix = self._rng.choice(SUPPLIER_PREFIXES)
             suppliers.append(
                 SupplierProfile(

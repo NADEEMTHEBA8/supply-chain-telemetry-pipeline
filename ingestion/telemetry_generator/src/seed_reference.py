@@ -1,15 +1,16 @@
 """
-Seed the PostgreSQL reference tables with machine and supplier data.
+Seed PostgreSQL reference tables with machine and supplier master data.
 
-These tables are the CDC source — Debezium tails the WAL and publishes
-changes to Kafka topics, which flow into the Bronze Delta layer on AWS S3.
-In production, AWS DMS replicates this ERP data directly to Kinesis/S3.
+These tables represent the ERP transactional source system. In production,
+AWS DMS or Debezium captures CDC events to feed downstream data lake layers.
 
-Run once after the Postgres container is up:
-    python -m ingestion.telemetry_generator.src.seed_reference
+Usage:
+    .venv/bin/python -m ingestion.telemetry_generator.src.seed_reference
 """
 
 from __future__ import annotations
+
+import random
 
 import psycopg2
 from psycopg2.extras import execute_values
@@ -60,6 +61,20 @@ def main() -> None:
         for s in suppliers
     ]
 
+    rng = random.Random(SEED)
+    inventory_rows = []
+    warehouses = ["WH_MX_01", "WH_DE_02", "WH_US_03", "WH_CN_04", "WH_IN_05"]
+    for s in suppliers:
+        inventory_rows.append((
+            s.part_id,
+            s.supplier_id,
+            rng.choice(warehouses),
+            rng.randint(50, 2000),
+            "AT_WAREHOUSE",
+            rng.randint(80, 200),
+            rng.randint(40, 100),
+        ))
+
     conn = _connect()
     try:
         with conn, conn.cursor() as cur:
@@ -83,21 +98,6 @@ def main() -> None:
                 supplier_rows,
             )
 
-            # Seed initial inventory levels (one row per machine+supplier combo)
-            import random
-            rng = random.Random(SEED)
-            inventory_rows = []
-            warehouses = ["WH_MX_01", "WH_DE_02", "WH_US_03", "WH_CN_04", "WH_IN_05"]
-            for s in suppliers:
-                inventory_rows.append((
-                    s.part_id,
-                    s.supplier_id,
-                    rng.choice(warehouses),
-                    rng.randint(50, 2000),   # stock_level
-                    "AT_WAREHOUSE",           # transit_status
-                    rng.randint(80, 200),     # reorder_point
-                    rng.randint(40, 100),     # safety_stock
-                ))
             execute_values(
                 cur,
                 """INSERT INTO public.inventory_levels
