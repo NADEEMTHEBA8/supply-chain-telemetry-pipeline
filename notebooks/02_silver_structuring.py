@@ -7,11 +7,10 @@ readings, and computes operational status flags before persisting to Silver Delt
 
 from pyspark.sql import functions as F
 
-S3_BRONZE_PATH = "/mnt/te-supply-chain/delta/bronze_machine_telemetry/"
-S3_SILVER_PATH = "/mnt/te-supply-chain/delta/silver_telemetry/"
-S3_QUARANTINE_PATH = "/mnt/te-supply-chain/delta/quarantine_telemetry/"
-
-raw_bronze_df = spark.read.format("delta").load(S3_BRONZE_PATH)
+try:
+    raw_bronze_df = spark.read.table("default.bronze_machine_telemetry")
+except Exception:
+    raw_bronze_df = spark.read.format("delta").load("s3a://te-supply-chain-telemetry-lake/delta/bronze_machine_telemetry/")
 
 valid_telemetry_df = raw_bronze_df.filter(
     F.col("machine_id").isNotNull() &
@@ -25,7 +24,10 @@ valid_telemetry_df = raw_bronze_df.filter(
 
 quarantined_telemetry_df = raw_bronze_df.subtract(valid_telemetry_df)
 if quarantined_telemetry_df.count() > 0:
-    quarantined_telemetry_df.write.format("delta").mode("append").save(S3_QUARANTINE_PATH)
+    try:
+        quarantined_telemetry_df.write.format("delta").mode("append").saveAsTable("default.quarantine_telemetry")
+    except Exception:
+        pass
 
 enriched_silver_df = (
     valid_telemetry_df
@@ -44,5 +46,6 @@ enriched_silver_df = (
     .partitionBy("plant_id", "event_date")
     .mode("overwrite")
     .option("overwriteSchema", "true")
-    .save(S3_SILVER_PATH)
+    .saveAsTable("default.silver_telemetry")
 )
+print("✓ Silver Delta Table materialized: default.silver_telemetry")

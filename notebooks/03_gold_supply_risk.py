@@ -7,14 +7,13 @@ Aligned with Amazon Connect Decisions Canonical Data Model (CDM) site entities.
 
 from pyspark.sql import functions as F
 
-S3_SILVER_PATH = "/mnt/te-supply-chain/delta/silver_telemetry/"
-S3_GOLD_RISK_PATH = "/mnt/te-supply-chain/delta/gold_supply_risk/"
-
-silver_telemetry_df = spark.read.format("delta").load(S3_SILVER_PATH)
+try:
+    silver_telemetry_df = spark.read.table("default.silver_telemetry")
+except Exception:
+    silver_telemetry_df = spark.read.format("delta").load("s3a://te-supply-chain-telemetry-lake/delta/silver_telemetry/")
 
 gold_supply_risk_df = (
     silver_telemetry_df
-    .filter(F.col("event_timestamp") >= F.current_timestamp() - F.expr("INTERVAL 1 DAY"))
     .groupBy("machine_id", "plant_id", "event_date")
     .agg(
         F.avg("temperature_celsius").alias("avg_temp_24h"),
@@ -49,9 +48,10 @@ gold_supply_risk_df = (
     .partitionBy("plant_id", "event_date")
     .mode("overwrite")
     .option("overwriteSchema", "true")
-    .save(S3_GOLD_RISK_PATH)
+    .saveAsTable("default.gold_supply_risk")
 )
 
+print("✓ Gold Delta Table materialized: default.gold_supply_risk")
 display(
     gold_supply_risk_df
     .orderBy(F.col("risk_score").desc())

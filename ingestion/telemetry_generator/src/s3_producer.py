@@ -43,5 +43,23 @@ class S3Producer:
             self._stats["errors"] += 1
 
     def send_batch(self, telemetry_batch: list[MachineEvent]) -> None:
-        for event in telemetry_batch:
-            self.send(event)
+        if not telemetry_batch:
+            return
+        key = (
+            f"raw/machine-telemetry/"
+            f"batch_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}_"
+            f"{uuid4().hex[:8]}.json"
+        )
+        body = b"\n".join([event.to_json() for event in telemetry_batch])
+        try:
+            self._client.put_object(
+                Bucket=self._bucket_name,
+                Key=key,
+                Body=body,
+                ContentType="application/json",
+            )
+            self._stats["sent"] += len(telemetry_batch)
+        except ClientError as exc:
+            logger.error("S3 batch write failure: %s", exc)
+            self._stats["errors"] += len(telemetry_batch)
+

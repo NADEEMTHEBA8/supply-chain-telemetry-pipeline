@@ -58,12 +58,12 @@ resource "aws_s3_object" "checkpoint_prefix" {
   key    = "checkpoints/"
 }
 
-resource "aws_kinesis_stream" "machine_telemetry" {
-  name             = "${var.project_name}-telemetry"
-  shard_count      = 1
-  retention_period = 24
-  tags             = local.common_tags
-}
+# resource "aws_kinesis_stream" "machine_telemetry" {
+#   name             = "${var.project_name}-telemetry"
+#   shard_count      = 1
+#   retention_period = 24
+#   tags             = local.common_tags
+# }
 
 resource "aws_iam_user" "databricks_pipeline" {
   name = "${var.project_name}-databricks-user"
@@ -110,7 +110,7 @@ resource "aws_iam_policy" "pipeline_policy" {
           "kinesis:GetShardIterator",
           "kinesis:DescribeStream"
         ]
-        Resource = [aws_kinesis_stream.machine_telemetry.arn]
+        Resource = ["arn:aws:kinesis:*:*:stream/${var.project_name}-telemetry"]
       }
     ]
   })

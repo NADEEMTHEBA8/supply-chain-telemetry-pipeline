@@ -5,7 +5,7 @@ output "s3_bucket_name" {
 
 output "kinesis_stream_name" {
   description = "Amazon Kinesis Data Stream name for telemetry ingestion"
-  value       = aws_kinesis_stream.machine_telemetry.name
+  value       = "${var.project_name}-telemetry"
 }
 
 output "databricks_access_key_id" {

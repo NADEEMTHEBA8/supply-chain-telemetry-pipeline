@@ -249,7 +249,7 @@ health:
 	@docker compose exec postgres pg_isready -U supply_chain_admin || \
 		echo "  ✗ Postgres not running. Start with: make cluster-up"
 	@echo "→ Debezium connector status:"
-	@curl -s http://localhost:8083/connectors/supply-chain-cdc/status 2>/dev/null | \
+	@curl -s http://localhost:8083/connectors/reference-postgres-source/status 2>/dev/null | \
 		$(PYTHON) -m json.tool || echo "  ✗ Kafka Connect not running."
 
 recon:
