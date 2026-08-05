@@ -32,7 +32,7 @@
 
 ## 📸 Production Proof & Infrastructure Validation
 
-The pipeline includes full visual verification captured directly from live PySpark cluster runs, Terraform IaC deployments, and PyTest assertions:
+The pipeline includes full visual verification captured directly from live PySpark cluster runs, AWS Cloud Console storage layers, Terraform IaC deployments, and PyTest assertions:
 
 * **Terraform Infrastructure Provisioning (`make tf-init` & `make tf-apply`):**
   ![Terraform Apply Output](docs/screenshots/supply_chain_02_tf_apply.png)
@@ -42,6 +42,18 @@ The pipeline includes full visual verification captured directly from live PySpa
 
 * **PySpark Medallion Engine & Top 5 High-Risk Machine Leaderboard:**
   ![PySpark Medallion Leaderboard](docs/screenshots/supply_chain_04_pyspark_medallion_leaderboard.png)
+
+* **AWS S3 Medallion Lakehouse Directory Structure (`s3://te-supply-chain-telemetry-lake/delta/`):**
+  ![AWS S3 Medallion Lakehouse Folders](docs/screenshots/supply_chain_06_aws_s3_medallion_folders.png)
+
+* **AWS S3 Silver Physical Hive Partitions (`plant_id=PLANT_MX_01/`, `plant_id=PLANT_DE_02/`):**
+  ![AWS S3 Silver Partition Directories](docs/screenshots/supply_chain_07_aws_s3_hive_partitions.png)
+
+* **AWS S3 Physical Snappy Parquet Files (`event_date=2026-08-05/`):**
+  ![AWS S3 Snappy Parquet Files](docs/screenshots/supply_chain_09_aws_s3_snappy_parquet.png)
+
+* **AWS S3 Calculated Total Footprint (2,710 Objects / 76.3 MB Storage):**
+  ![AWS S3 Total Size Modal](docs/screenshots/supply_chain_08_aws_s3_total_size.png)
 
 * **Automated PyTest Suite & Line Coverage Verification (`make test`):**
   ![PyTest Suite Results](docs/screenshots/supply_chain_05_pytest_suite.png)
