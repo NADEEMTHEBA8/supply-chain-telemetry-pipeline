@@ -1,0 +1,21 @@
+resources:
+  jobs:
+    supply_chain_telemetry_job:
+      name: "Supply Chain Telemetry Medallion Refresh"
+      schedule:
+        quartz_cron_expression: "0 0 * * * ?"
+        timezone_id: "UTC"
+      tasks:
+        - task_key: "bronze_autoloader_ingest"
+          spark_python_task:
+            python_file: "src/ingestion/bronze_autoloader.py"
+        - task_key: "silver_structuring"
+          depends_on:
+            - task_key: "bronze_autoloader_ingest"
+          spark_python_task:
+            python_file: "src/models/silver_structuring.py"
+        - task_key: "gold_supply_risk"
+          depends_on:
+            - task_key: "silver_structuring"
+          spark_python_task:
+            python_file: "src/models/gold_supply_risk.py"

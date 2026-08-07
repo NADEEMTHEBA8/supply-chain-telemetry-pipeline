@@ -15,15 +15,22 @@ import argparse
 import os
 import time
 
-from ingestion.telemetry_generator.src.generator import TelemetryGenerator
-from ingestion.telemetry_generator.src.kinesis_producer import KinesisProducer
-from ingestion.telemetry_generator.src.profiles import ProfileFactory
-from ingestion.telemetry_generator.src.s3_producer import S3Producer
-from ingestion.telemetry_generator.src.seed_reference import (
-    NUM_MACHINES,
-    NUM_SUPPLIERS,
-    SEED,
-)
+try:
+    from src.ingestion.generator import TelemetryGenerator
+    from src.ingestion.kinesis_producer import KinesisProducer
+    from src.ingestion.profiles import ProfileFactory
+    from src.ingestion.s3_producer import S3Producer
+    from src.ingestion.seed_reference import NUM_MACHINES, NUM_SUPPLIERS, SEED
+except ImportError:
+    from ingestion.telemetry_generator.src.generator import TelemetryGenerator
+    from ingestion.telemetry_generator.src.kinesis_producer import KinesisProducer
+    from ingestion.telemetry_generator.src.profiles import ProfileFactory
+    from ingestion.telemetry_generator.src.s3_producer import S3Producer
+    from ingestion.telemetry_generator.src.seed_reference import (
+        NUM_MACHINES,
+        NUM_SUPPLIERS,
+        SEED,
+    )
 
 PRINT_EVERY = 500
 S3_BUCKET = os.environ.get("S3_BUCKET_NAME", "te-supply-chain-telemetry-lake")

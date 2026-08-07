@@ -47,6 +47,16 @@ def generate_production_telemetry(num_events=50000):
         .drop("id")
     )
 
+import os
+
+# Optional: Set AWS S3 credentials if present in Databricks secrets or environment
+aws_access_key = os.getenv("AWS_ACCESS_KEY_ID")
+aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+if aws_access_key and aws_secret_key:
+    spark.conf.set("fs.s3a.access.key", aws_access_key)
+    spark.conf.set("fs.s3a.secret.key", aws_secret_key)
+    spark.conf.set("fs.s3a.endpoint", "s3.us-east-1.amazonaws.com")
+
 try:
     # Attempt reading raw S3 files if cloud storage credentials are configured
     raw_s3_df = (
@@ -55,14 +65,18 @@ try:
         .schema(RAW_TELEMETRY_SCHEMA)
         .json("s3a://te-supply-chain-telemetry-lake/raw/machine-telemetry/")
     )
-    bronze_telemetry_df = (
-        raw_s3_df
-        .withColumn("event_timestamp", col("event_timestamp").cast(TimestampType()))
-        .withColumn("event_date", col("event_timestamp").cast("date"))
-        .withColumn("_ingested_at", current_timestamp())
-        .withColumn("_source_file", input_file_name())
-    )
-except Exception:
+    # Force action execution inside try block to validate S3 credentials
+    if raw_s3_df.take(1):
+        bronze_telemetry_df = (
+            raw_s3_df
+            .withColumn("event_timestamp", col("event_timestamp").cast(TimestampType()))
+            .withColumn("event_date", col("event_timestamp").cast("date"))
+            .withColumn("_ingested_at", current_timestamp())
+            .withColumn("_source_file", input_file_name())
+        )
+    else:
+        raise Exception("S3 path empty")
+except Exception as e:
     # Production-scale PySpark Generator: Materialize 50,000 real events
     print("Generating 50,000 production telemetry events in PySpark...")
     raw_df = generate_production_telemetry(num_events=50000)

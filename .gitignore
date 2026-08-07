@@ -55,3 +55,11 @@ secret*
 *.pem
 interview*.md
 job-hunt/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*

@@ -11,13 +11,17 @@ from __future__ import annotations
 import random
 from datetime import UTC, datetime
 
-from ingestion.telemetry_generator.src.profiles import MachineProfile, SupplierProfile
-from ingestion.telemetry_generator.src.schemas import (
-    InventoryEvent,
-    MachineEvent,
-    OperationalStatus,
-    TransitStatus,
-)
+try:
+    from src.ingestion.profiles import MachineProfile, SupplierProfile
+    from src.ingestion.schemas import InventoryEvent, MachineEvent, OperationalStatus, TransitStatus
+except ImportError:
+    from ingestion.telemetry_generator.src.profiles import MachineProfile, SupplierProfile
+    from ingestion.telemetry_generator.src.schemas import (
+        InventoryEvent,
+        MachineEvent,
+        OperationalStatus,
+        TransitStatus,
+    )
 
 ERROR_CODES = ["E001_OVERHEAT", "E002_VIBRATION", "E003_PRESSURE", "E004_BEARING_WEAR"]
 ERROR_PROBABILITY = 0.03

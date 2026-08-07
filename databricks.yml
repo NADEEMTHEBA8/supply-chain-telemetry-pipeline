@@ -1,0 +1,16 @@
+bundle:
+  name: supply-chain-telemetry-pipeline
+
+include:
+  - resources/*.yml
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://community.cloud.databricks.com
+  prod:
+    mode: production
+    workspace:
+      host: https://community.cloud.databricks.com

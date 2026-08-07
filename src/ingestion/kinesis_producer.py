@@ -8,7 +8,10 @@ from typing import Any
 import boto3
 from botocore.exceptions import ClientError
 
-from ingestion.telemetry_generator.src.schemas import MachineEvent
+try:
+    from src.ingestion.schemas import MachineEvent
+except ImportError:
+    from ingestion.telemetry_generator.src.schemas import MachineEvent
 
 logger = logging.getLogger(__name__)
 

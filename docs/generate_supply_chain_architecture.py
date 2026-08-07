@@ -1,0 +1,370 @@
+import resvg_py
+
+# Prescriptive Executive Architecture Generator for Supply Chain Telemetry Pipeline
+svg_template = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2400 1250" width="2400" height="1250" style="background-color: #F8FAFC; font-family: system-ui, -apple-system, 'SF Pro Display', Inter, Roboto, sans-serif;">
+  <defs>
+    <style>
+      .title-vpc { font-size: 17px; font-weight: 800; fill: #232F3E; letter-spacing: 1.0px; }
+      .step-header { font-size: 16px; font-weight: 800; fill: #232F3E; letter-spacing: 0.5px; }
+      .node-title { font-size: 15px; font-weight: 700; fill: #0F172A; }
+      .node-subtext { font-size: 12px; font-weight: 500; fill: #475569; }
+      .arrow-label { font-size: 12px; font-weight: 700; fill: #334155; }
+      .legend-text { font-size: 12px; font-weight: 600; fill: #334155; }
+      .swimlane-title { font-size: 13px; font-weight: 800; fill: #232F3E; letter-spacing: 1px; }
+      
+      .card { fill: #FFFFFF; rx: 12px; ry: 12px; filter: drop-shadow(0px 2px 4px rgba(0,0,0,0.04)); }
+      .card-blue { stroke: #0073BB; stroke-width: 2.5px; }
+      .card-amber { stroke: #FF9D00; stroke-width: 2.5px; }
+      .card-sky { stroke: #0073BB; stroke-width: 2.5px; }
+      .card-orange { stroke: #FF3600; stroke-width: 2.5px; }
+      .card-red { stroke: #FF5757; stroke-width: 2.5px; }
+      .card-purple { stroke: #8C4FFF; stroke-width: 2.5px; }
+      .card-purple-bg { fill: #FAF5FF; stroke: #8C4FFF; stroke-width: 2.5px; }
+      .card-red-bg { fill: #FEF2F2; stroke: #FF5757; stroke-width: 2.5px; }
+      .card-green { stroke: #07C284; stroke-width: 2.5px; }
+
+      .connection-line { stroke: #0073BB; stroke-width: 3.0px; fill: none; }
+      .etl-line { stroke: #FF9D00; stroke-width: 2.5px; fill: none; }
+      .control-line { stroke: #8C4FFF; stroke-width: 2.2px; stroke-dasharray: 6 4; fill: none; }
+      .dotted-line { stroke: #0073BB; stroke-width: 2.2px; stroke-dasharray: 4 4; fill: none; }
+      .dotted-red { stroke: #FF5757; stroke-width: 2.5px; stroke-dasharray: 6 4; fill: none; }
+
+      .column-box { fill: #F1F5F9; stroke: #CBD5E1; stroke-width: 1.5px; rx: 16px; }
+      .vpc-box { fill: #FFFFFF; stroke: #232F3E; stroke-width: 2.5px; stroke-dasharray: 8 6; rx: 20px; }
+      .swimlane-box { fill: #F1F5F9; stroke: #CBD5E1; stroke-width: 1.8px; rx: 12px; }
+      .legend-box { fill: #FFFFFF; stroke: #CBD5E1; stroke-width: 1.5px; rx: 10px; }
+    </style>
+
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#0073BB" />
+    </marker>
+
+    <marker id="arrow-amber" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#FF9D00" />
+    </marker>
+
+    <marker id="arrow-purple" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#8C4FFF" />
+    </marker>
+
+    <marker id="arrow-red" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#FF5757" />
+    </marker>
+  </defs>
+
+  <!-- AWS PRIVATE VPC BOUNDARY PERIMETER (Symmetrically Centered) -->
+  <rect x="20" y="20" width="2360" height="1120" class="vpc-box" />
+  
+  <!-- TOP TITLE PILL BADGE (Generously Sized) -->
+  <g transform="translate(1200, 60)" text-anchor="middle">
+    <rect x="-530" y="-22" width="1060" height="44" rx="22" fill="#EFF6FF" stroke="#0073BB" stroke-width="2" />
+    <text x="0" y="6" text-anchor="middle" class="title-vpc">PREDICTIVE SUPPLY CHAIN TELEMETRY PIPELINE (AWS CLOUD &amp; DATABRICKS NATIVE)</text>
+  </g>
+
+  <!-- ==================== COLUMN 1: STEP 1 AWS CLOUD STREAM INGESTION ==================== -->
+  <rect x="68" y="95" width="530" height="885" class="column-box" />
+  <text x="333" y="130" text-anchor="middle" class="step-header">STEP 1: AWS CLOUD STREAM INGESTION</text>
+
+  <!-- Node 1: AWS Kinesis Data Streams -->
+  <g transform="translate(88, 160)">
+    <rect width="150" height="135" class="card card-blue" />
+    <circle cx="75" cy="32" r="14" fill="#0073BB" />
+    <path d="M 67 32 L 83 32 M 75 24 L 75 40" stroke="#FFFFFF" stroke-width="2.5" />
+    <text x="75" y="78" text-anchor="middle" class="node-title">AWS Kinesis</text>
+    <text x="75" y="101" text-anchor="middle" class="node-subtext">50,000 IoT Events/sec</text>
+  </g>
+
+  <!-- Node 2: AWS MSK Kafka Cluster -->
+  <g transform="translate(258, 160)">
+    <rect width="150" height="135" class="card card-blue" />
+    <path d="M 60 20 C 60 14, 90 14, 90 20 C 90 30, 60 30, 60 20 Z M 65 28 L 65 44 C 65 48, 85 48, 85 44 L 85 28" fill="none" stroke="#0073BB" stroke-width="2.5" />
+    <text x="75" y="78" text-anchor="middle" class="node-title">AWS MSK Kafka</text>
+    <text x="75" y="101" text-anchor="middle" class="node-subtext">Debezium ERP CDC</text>
+  </g>
+
+  <!-- Node 3: AWS S3 Raw Staging -->
+  <g transform="translate(428, 160)">
+    <rect width="150" height="135" class="card card-blue" />
+    <rect x="56" y="14" width="38" height="38" rx="8" fill="#0073BB" />
+    <text x="75" y="38" text-anchor="middle" font-size="14px" font-weight="900" fill="#FFFFFF">RAW</text>
+    <text x="75" y="78" text-anchor="middle" class="node-title">AWS S3 Raw Staging</text>
+    <text x="75" y="101" text-anchor="middle" class="node-subtext">s3://.../raw/telemetry</text>
+  </g>
+
+  <!-- Bottom Node: AWS Kinesis Data Firehose Stream Engine -->
+  <g transform="translate(168, 365)">
+    <rect width="330" height="145" class="card card-blue" />
+    <circle cx="165" cy="24" r="7" fill="#0073BB" />
+    <circle cx="149" cy="42" r="7" fill="#0073BB" />
+    <circle cx="181" cy="42" r="7" fill="#0073BB" />
+    <path d="M 165 24 L 149 42 M 165 24 L 181 42 M 149 42 L 181 42" stroke="#0073BB" stroke-width="2" />
+    <text x="165" y="76" text-anchor="middle" class="node-title" fill="#0073BB">AWS Kinesis Firehose</text>
+    <text x="165" y="100" text-anchor="middle" class="node-title">Serverless Stream Ingestion</text>
+    <text x="165" y="122" text-anchor="middle" class="node-subtext">16-Thread High-Concurrency Sink</text>
+  </g>
+
+  <!-- Connectors in Step 1 -->
+  <path d="M 163 295 L 253 365" class="connection-line" marker-end="url(#arrow-blue)" />
+  <path d="M 333 295 L 333 365" class="connection-line" marker-end="url(#arrow-blue)" />
+  <path d="M 503 295 L 413 365" class="connection-line" marker-end="url(#arrow-blue)" />
+
+
+  <!-- ==================== COLUMN 2: STEP 2 BRONZE LAKE & QUALITY GUARD ==================== -->
+  <rect x="646" y="95" width="530" height="885" class="column-box" />
+  <text x="911" y="130" text-anchor="middle" class="step-header">STEP 2: BRONZE LAKE &amp; QUALITY GUARD</text>
+
+  <!-- Top Left: AWS S3 Bronze Delta Lake -->
+  <g transform="translate(666, 160)">
+    <rect width="230" height="135" class="card card-amber" />
+    <ellipse cx="115" cy="22" rx="16" ry="6" fill="#FACC15" stroke="#FF9D00" stroke-width="2" />
+    <path d="M 99 22 L 99 44 C 99 50, 131 50, 131 44 L 131 22" fill="#FACC15" stroke="#FF9D00" stroke-width="2" />
+    <ellipse cx="115" cy="44" rx="16" ry="6" fill="#FACC15" stroke="#FF9D00" stroke-width="2" />
+    <text x="115" y="76" text-anchor="middle" class="node-title" fill="#FF9D00">AWS S3 Bronze Lake</text>
+    <text x="115" y="98" text-anchor="middle" class="node-subtext">Delta Lake Auto Loader</text>
+    <text x="115" y="116" text-anchor="middle" class="node-subtext">s3://.../bronze_telemetry</text>
+  </g>
+
+  <!-- Top Right: AWS MWAA Airflow Orchestrator -->
+  <g transform="translate(926, 160)">
+    <rect width="230" height="135" class="card card-purple" />
+    <circle cx="115" cy="33" r="14" fill="none" stroke="#8C4FFF" stroke-width="2.5" />
+    <path d="M 115 19 L 115 47 M 101 33 L 129 33" stroke="#8C4FFF" stroke-width="2.5" />
+    <text x="115" y="76" text-anchor="middle" class="node-title" fill="#8C4FFF">AWS MWAA Airflow</text>
+    <text x="115" y="98" text-anchor="middle" class="node-subtext">Managed Airflow Service</text>
+    <text x="115" y="116" text-anchor="middle" class="node-subtext">DAG Task Pre-Hooks</text>
+  </g>
+
+  <!-- Pandera Schema Contracts -->
+  <g transform="translate(761, 375)">
+    <rect width="300" height="135" class="card card-purple-bg" />
+    <path d="M 138 22 L 150 17 L 162 22 L 162 35 C 162 42, 150 47, 150 47 C 150 47, 138 42, 138 35 Z" fill="#8C4FFF" />
+    <text x="150" y="72" text-anchor="middle" class="node-title" fill="#8C4FFF">Pandera Contracts</text>
+    <text x="150" y="96" text-anchor="middle" class="node-title" fill="#6B21A8">Shift-Left Schema Guard</text>
+    <text x="150" y="118" text-anchor="middle" class="node-subtext">Temp &amp; Vib Range Gates</text>
+  </g>
+
+  <!-- Bottom Box: S3 DLQ Bucket -->
+  <g transform="translate(761, 595)">
+    <rect width="300" height="130" class="card card-red-bg" />
+    <ellipse cx="150" cy="22" rx="16" ry="6" fill="#FF5757" stroke="#FF5757" stroke-width="2" />
+    <path d="M 134 22 L 134 44 C 134 50, 166 50, 166 44 L 166 22" fill="#FCA5A5" stroke="#FF5757" stroke-width="2" />
+    <ellipse cx="150" cy="44" rx="16" ry="6" fill="#FF5757" stroke="#FF5757" stroke-width="2" />
+    <text x="150" y="74" text-anchor="middle" class="node-title" fill="#FF5757">AWS S3 DLQ Bucket</text>
+    <text x="150" y="96" text-anchor="middle" class="node-title" fill="#991B1B">Quarantine Corrupt Telemetry</text>
+    <text x="150" y="114" text-anchor="middle" class="node-subtext">quarantine_telemetry Sink</text>
+  </g>
+
+  <!-- Flow in Step 2 -->
+  <path d="M 781 295 L 841 375" class="etl-line" marker-end="url(#arrow-amber)" />
+  <path d="M 1041 295 L 981 375" class="control-line" marker-end="url(#arrow-purple)" />
+  
+  <rect x="741" y="325" width="80" height="24" rx="4" fill="#FFFFFF" stroke="#CBD5E1" />
+  <text x="781" y="341" text-anchor="middle" class="arrow-label">2. Validate</text>
+
+  <!-- Dotted Red Arrow from Pandera to DLQ -->
+  <path d="M 911 510 L 911 595" class="dotted-red" marker-end="url(#arrow-red)" />
+  <rect x="861" y="540" width="100" height="24" rx="4" fill="#FFFFFF" stroke="#FF5757" />
+  <text x="911" y="556" text-anchor="middle" class="arrow-label" fill="#FF5757">Invalid Metric</text>
+
+
+  <!-- ==================== COLUMN 3: STEP 3 COMPUTE & MEDALLION LAKEHOUSE ==================== -->
+  <rect x="1224" y="95" width="530" height="885" class="column-box" />
+  <text x="1489" y="130" text-anchor="middle" class="step-header">STEP 3: COMPUTE &amp; MEDALLION LAKEHOUSE</text>
+
+  <!-- Top Left: Databricks Serverless PySpark Engine -->
+  <g transform="translate(1244, 160)">
+    <rect width="230" height="135" class="card card-orange" />
+    <polygon points="115,18 119,28 129,28 121,34 124,44 115,38 106,44 109,34 101,28 111,28" fill="#FF3600" />
+    <text x="115" y="76" text-anchor="middle" class="node-title" fill="#FF3600">Databricks PySpark</text>
+    <text x="115" y="98" text-anchor="middle" class="node-subtext">Databricks Serverless Compute</text>
+    <text x="115" y="116" text-anchor="middle" class="node-subtext">Anomaly Flag &amp; Hive Partition</text>
+  </g>
+
+  <!-- Top Right: AWS Glue Catalog -->
+  <g transform="translate(1504, 160)">
+    <rect width="230" height="135" class="card card-purple" />
+    <path d="M 105 24 L 115 24 L 120 29 L 130 29 L 130 46 L 105 46 Z" fill="none" stroke="#8C4FFF" stroke-width="2.5" />
+    <text x="115" y="76" text-anchor="middle" class="node-title" fill="#8C4FFF">AWS Glue Catalog</text>
+    <text x="115" y="98" text-anchor="middle" class="node-subtext">Delta Table Metastore</text>
+    <text x="115" y="116" text-anchor="middle" class="node-subtext">Shared Data Schemas</text>
+  </g>
+
+  <!-- Middle Node: AWS S3 Silver Delta Lake -->
+  <g transform="translate(1324, 375)">
+    <rect width="330" height="135" class="card card-amber" />
+    <ellipse cx="165" cy="22" rx="16" ry="6" fill="#FACC15" stroke="#FF9D00" stroke-width="2" />
+    <path d="M 149 22 L 149 44 C 149 50, 181 50, 181 44 L 181 22" fill="#FACC15" stroke="#FF9D00" stroke-width="2" />
+    <ellipse cx="165" cy="44" rx="16" ry="6" fill="#FACC15" stroke="#FF9D00" stroke-width="2" />
+    <text x="165" y="76" text-anchor="middle" class="node-title" fill="#FF9D00">AWS S3 Silver Lake</text>
+    <text x="165" y="100" text-anchor="middle" class="node-title">Cleansed &amp; Enriched Telemetry</text>
+    <text x="165" y="120" text-anchor="middle" class="node-subtext">Partitioned: (plant_id, event_date)</text>
+  </g>
+
+  <!-- Lower-Middle Node: dbt Core 1.8 Engine -->
+  <g transform="translate(1324, 575)">
+    <rect width="330" height="135" class="card card-red" />
+    <polygon points="165,18 177,30 165,42 153,30" fill="#FF6B4A" />
+    <text x="165" y="76" text-anchor="middle" class="node-title" fill="#FF3600">dbt Databricks Engine</text>
+    <text x="165" y="100" text-anchor="middle" class="node-title">SCD Type 2 &amp; Quality Tests</text>
+    <text x="165" y="120" text-anchor="middle" class="node-subtext">Databricks Warehouse Adapter</text>
+  </g>
+
+  <!-- Bottom Node: AWS S3 Gold Feature Marts -->
+  <g transform="translate(1324, 775)">
+    <rect width="330" height="135" class="card card-amber" />
+    <ellipse cx="165" cy="22" rx="16" ry="6" fill="#FACC15" stroke="#FF9D00" stroke-width="2" />
+    <path d="M 149 22 L 149 44 C 149 50, 181 50, 181 44 L 181 22" fill="#FACC15" stroke="#FF9D00" stroke-width="2" />
+    <ellipse cx="165" cy="44" rx="16" ry="6" fill="#FACC15" stroke="#FF9D00" stroke-width="2" />
+    <text x="165" y="76" text-anchor="middle" class="node-title" fill="#FF9D00">AWS S3 Gold Lake</text>
+    <text x="165" y="100" text-anchor="middle" class="node-title">Curated 24h Machine Risk Marts</text>
+    <text x="165" y="120" text-anchor="middle" class="node-subtext">s3://.../gold_supply_risk</text>
+  </g>
+
+  <!-- Step 3 Connectors -->
+  <path d="M 1359 295 L 1439 375" class="etl-line" marker-end="url(#arrow-amber)" />
+  <path d="M 1489 510 L 1489 575" class="etl-line" marker-end="url(#arrow-amber)" />
+  <path d="M 1489 710 L 1489 775" class="etl-line" marker-end="url(#arrow-amber)" />
+
+  <!-- Dotted Metastore Sync Arrows (Clean Non-Overlapping Routing) -->
+  <path d="M 1619 295 C 1679 330, 1679 370, 1654 442" class="dotted-line" marker-end="url(#arrow-blue)" />
+  <path d="M 1689 295 C 1739 480, 1729 720, 1654 842" class="dotted-line" marker-end="url(#arrow-blue)" />
+  
+  <rect x="1665" y="340" width="95" height="24" rx="4" fill="#FFFFFF" stroke="#0073BB" />
+  <text x="1712.5" y="356" text-anchor="middle" class="arrow-label" fill="#0073BB">Metastore Sync</text>
+
+
+  <!-- ==================== COLUMN 4: STEP 4 SERVING & EXECUTIVE ANALYTICS ==================== -->
+  <rect x="1802" y="95" width="530" height="885" class="column-box" />
+  <text x="2067" y="130" text-anchor="middle" class="step-header">STEP 4: SERVING &amp; EXECUTIVE ANALYTICS</text>
+
+  <!-- Top Node: Databricks SQL Serverless Engine -->
+  <g transform="translate(1897, 160)">
+    <rect width="340" height="135" class="card card-sky" />
+    <circle cx="170" cy="31" r="14" fill="#0073BB" />
+    <rect x="162" y="28" width="16" height="6" fill="#FFFFFF" rx="2" />
+    <text x="170" y="76" text-anchor="middle" class="node-title" fill="#0073BB">Databricks SQL Engine</text>
+    <text x="170" y="100" text-anchor="middle" class="node-title">Serverless SQL Analytics</text>
+    <text x="170" y="118" text-anchor="middle" class="node-subtext">90% Query Scan Reduction</text>
+  </g>
+
+  <!-- Middle Node: Databricks SQL Executive Dashboard -->
+  <g transform="translate(1897, 375)">
+    <rect width="340" height="135" class="card card-green" />
+    <polygon points="172,18 162,33 170,33 168,48 178,31 170,31" fill="#07C284" />
+    <text x="170" y="76" text-anchor="middle" class="node-title" fill="#07C284">Databricks Dashboard</text>
+    <text x="170" y="100" text-anchor="middle" class="node-title">High-Risk Machine Leaderboard</text>
+    <text x="170" y="118" text-anchor="middle" class="node-subtext">Real-Time Site Risk Bar Charts</text>
+  </g>
+
+  <!-- Bottom Node: AWS CloudWatch Audit Engine -->
+  <g transform="translate(1897, 595)">
+    <rect width="340" height="135" class="card card-purple" />
+    <path d="M 160 20 C 150 20, 150 30, 160 30 C 170 30, 170 40, 160 40 M 170 40 C 180 40, 180 30, 170 30 C 160 30, 160 20, 170 20" stroke="#8C4FFF" stroke-width="3.5" fill="none" />
+    <text x="170" y="76" text-anchor="middle" class="node-title" fill="#8C4FFF">AWS CloudWatch &amp; Audit</text>
+    <text x="170" y="100" text-anchor="middle" class="node-title">Bronze/Silver Reconciliation</text>
+    <text x="170" y="118" text-anchor="middle" class="node-subtext">Zero Record Loss Verification</text>
+  </g>
+
+  <!-- Vertical downward arrows in Step 4 -->
+  <path d="M 2067 295 L 2067 375" class="connection-line" marker-end="url(#arrow-blue)" />
+  <path d="M 2067 510 L 2067 595" class="connection-line" marker-end="url(#arrow-blue)" />
+
+
+  <!-- ==================== MAIN PIPELINE INTER-STEP CONNECTORS ==================== -->
+  
+  <!-- Connector 1: Step 1 -> Step 2 -->
+  <path d="M 498 437 L 666 295" class="connection-line" marker-end="url(#arrow-blue)" />
+  <rect x="535" y="345" width="105" height="26" rx="5" fill="#FFFFFF" stroke="#CBD5E1" />
+  <text x="587.5" y="362" text-anchor="middle" class="arrow-label">1. Stream Events</text>
+
+  <!-- Connector 2: Step 2 -> Step 3 -->
+  <path d="M 1061 442 L 1244 295" class="connection-line" marker-end="url(#arrow-blue)" />
+  <rect x="1100" y="345" width="125" height="26" rx="5" fill="#FFFFFF" stroke="#CBD5E1" />
+  <text x="1162.5" y="362" text-anchor="middle" class="arrow-label">3. Clean &amp; Agg</text>
+
+  <!-- Connector 3: Step 3 -> Step 4 (Symmetric Gutter Curve) -->
+  <path d="M 1654 842 C 1780 820, 1820 400, 1897 227" class="etl-line" marker-end="url(#arrow-amber)" />
+  <rect x="1745" y="660" width="115" height="26" rx="5" fill="#FFFFFF" stroke="#FF9D00" />
+  <text x="1802.5" y="677" text-anchor="middle" class="arrow-label" fill="#FF9D00">4. Risk Query</text>
+
+
+  <!-- ==================== BOTTOM SWIMLANE: CODEBASE INFRASTRUCTURE & GOVERNANCE ==================== -->
+  <rect x="68" y="1005" width="2264" height="60" class="swimlane-box" />
+  <text x="1200" y="1026" text-anchor="middle" class="swimlane-title">100% VERIFIED CODEBASE INFRASTRUCTURE &amp; GOVERNANCE SERVICES</text>
+
+  <g transform="translate(100, 1038)">
+    <text x="0" y="14" class="legend-text" fill="#0073BB">🔐 AWS IAM &amp; KMS:</text>
+    <text x="150" y="14" class="node-subtext">Least-Privilege RBAC Policies &amp; KMS Data Encryption</text>
+  </g>
+
+  <g transform="translate(580, 1038)">
+    <text x="0" y="14" class="legend-text" fill="#8C4FFF">📋 Unity &amp; Glue Catalog:</text>
+    <text x="170" y="14" class="node-subtext">Central Data Catalog Schemas &amp; Object Governance</text>
+  </g>
+
+  <g transform="translate(1050, 1038)">
+    <text x="0" y="14" class="legend-text" fill="#FF5757">🛠️ IaC &amp; CI/CD:</text>
+    <text x="120" y="14" class="node-subtext">Terraform 1.6 Declarative IaC &amp; PyTest Automation</text>
+  </g>
+
+  <g transform="translate(1560, 1038)">
+    <text x="0" y="14" class="legend-text" fill="#07C284">🧪 Quality Guard:</text>
+    <text x="130" y="14" class="node-subtext">5/5 Passed PyTest Suite &amp; Pandera Contract Gates</text>
+  </g>
+
+
+  <!-- ==================== CANVAS VECTOR LEGEND ==================== -->
+  <rect x="68" y="1080" width="2264" height="45" class="legend-box" />
+  
+  <g transform="translate(90, 1107)">
+    <line x1="0" y1="0" x2="50" y2="0" class="connection-line" marker-end="url(#arrow-blue)" />
+    <text x="65" y="4" class="legend-text">Primary Streaming Data Bus (Solid Cloud-Blue)</text>
+  </g>
+
+  <g transform="translate(540, 1107)">
+    <line x1="0" y1="0" x2="50" y2="0" class="etl-line" marker-end="url(#arrow-amber)" />
+    <text x="65" y="4" class="legend-text">Micro-Batch Lakehouse Storage ETL (Solid Amber)</text>
+  </g>
+
+  <g transform="translate(1030, 1107)">
+    <line x1="0" y1="0" x2="50" y2="0" class="control-line" marker-end="url(#arrow-purple)" />
+    <text x="65" y="4" class="legend-text">Control &amp; Orchestration Trigger (Dashed Galaxy Purple)</text>
+  </g>
+
+  <g transform="translate(1500, 1107)">
+    <line x1="0" y1="0" x2="50" y2="0" class="dotted-line" marker-end="url(#arrow-blue)" />
+    <text x="65" y="4" class="legend-text">Metastore &amp; Schema Sync (Dotted Cloud-Blue)</text>
+  </g>
+
+  <g transform="translate(1950, 1107)">
+    <line x1="0" y1="0" x2="50" y2="0" class="dotted-red" marker-end="url(#arrow-red)" />
+    <text x="65" y="4" class="legend-text">Quarantine DLQ Isolation (Coral Red)</text>
+  </g>
+
+</svg>
+"""
+
+svg_path = '/Users/nadeemtheba/projects/supply-chain-telemetry-pipeline/docs/assets/supply_chain_aws_cloud_v1.svg'
+alt_svg_path = '/Users/nadeemtheba/projects/supply-chain-telemetry-pipeline/docs/assets/supply_chain_architecture.svg'
+
+with open(svg_path, 'w', encoding='utf-8') as f:
+    f.write(svg_template)
+
+with open(alt_svg_path, 'w', encoding='utf-8') as f:
+    f.write(svg_template)
+
+print('Executive Redesign Blueprint Supply Chain Vector SVG created successfully!')
+
+# Render Ultra-HD 4K PNG via resvg-py
+png_bytes = resvg_py.svg_to_bytes(svg_template, zoom=4.0)
+
+png_path = '/Users/nadeemtheba/projects/supply-chain-telemetry-pipeline/docs/assets/supply_chain_aws_cloud_v1.png'
+alt_png_path = '/Users/nadeemtheba/projects/supply-chain-telemetry-pipeline/docs/assets/supply_chain_architecture_diagram.png'
+
+with open(png_path, 'wb') as f:
+    f.write(png_bytes)
+
+with open(alt_png_path, 'wb') as f:
+    f.write(png_bytes)
+
+print(f'Executive Redesign Blueprint Supply Chain 4K Ultra-HD PNG generated successfully ({len(png_bytes)/1024/1024:.2f} MB)!')

@@ -9,6 +9,7 @@ from pyspark.sql import functions as F
 
 try:
     silver_telemetry_df = spark.read.table("default.silver_telemetry")
+    silver_telemetry_df.take(1)
 except Exception:
     silver_telemetry_df = spark.read.format("delta").load("s3a://te-supply-chain-telemetry-lake/delta/silver_telemetry/")
 
