@@ -35,8 +35,8 @@ jobs:
 
       - name: Validate config module imports
         run: |
-          python -c "from config.settings import settings; print('AppSettings OK — stream:', settings.kinesis_stream_name)"
-          python -c "from config.logging_config import configure_logging; print('logging_config OK')"
+          python -c "from src.common.settings import settings; print('AppSettings OK — stream:', settings.kinesis_stream_name)"
+          python -c "from src.common.logger import configure_logging; print('logger OK')"
 
       - name: Run tests
         run: pytest -v --tb=short
@@ -96,5 +96,5 @@ jobs:
         with:
           terraform_version: "1.6.0"
       - run: |
-          cd infra/terraform-aws-freetier
+          cd terraform
           terraform fmt -check
